@@ -90,18 +90,15 @@ public class PipInstaller
 
     public async Task InstallLibrariesAsync(Action<string> onOutput)
     {
-        // Core libraries
-        // We use --prefer-binary to avoid building from source
-        // We also want to ensure we get the CPU version of torch if no GPU? 
-        // Actually faster-whisper handles this well usually, but on Windows 
-        // we might need specific torch versions for CUDA if the user wants GPU.
-        // For now, let's trust standard pip install which grabs latest stable.
+        // Install torch with CUDA 12.8 support (cu128).
+        // cu128 is backward compatible with RTX 3090, 4090, and 5090.
+        // Without the --index-url, pip installs CPU-only torch on Windows.
+        onOutput("Installing PyTorch with CUDA 12.8 (cu128) support...");
+        await RunCommandAsync("-m pip install torch torchaudio --upgrade --no-warn-script-location --index-url https://download.pytorch.org/whl/cu128", onOutput);
         
-        var libs = "faster-whisper torch torchaudio";
-        onOutput($"Installing libraries: {libs}...");
-        
-        // --no-warn-script-location suppresses warnings about scripts not in PATH
-        await RunCommandAsync($"-m pip install {libs} --upgrade --no-warn-script-location --prefer-binary", onOutput);
+        // Install faster-whisper separately (from default PyPI)
+        onOutput("Installing faster-whisper...");
+        await RunCommandAsync("-m pip install faster-whisper --upgrade --no-warn-script-location --prefer-binary", onOutput);
         
         onOutput("Installation complete.");
     }

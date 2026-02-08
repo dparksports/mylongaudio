@@ -137,6 +137,17 @@ public partial class MainWindow : Window
         StartEngineCheck.IsChecked = _appSettings.StartEngineOnLaunch;
         SkipExistingCheck.IsChecked = _appSettings.SkipExistingFiles;
         
+        // Set device preference from settings
+        foreach (ComboBoxItem item in DeviceCombo.Items)
+        {
+            if (item.Tag?.ToString() == _appSettings.DevicePreference)
+            {
+                item.IsSelected = true;
+                break;
+            }
+        }
+        _runner.DevicePreference = _appSettings.DevicePreference;
+
         // Auto-start engine if enabled
         if (_appSettings.StartEngineOnLaunch)
         {
@@ -345,6 +356,7 @@ public partial class MainWindow : Window
         public int GpuRefreshIntervalSeconds { get; set; } = 3;
         public bool StartEngineOnLaunch { get; set; } = false;
         public bool SkipExistingFiles { get; set; } = false;
+        public string DevicePreference { get; set; } = "cuda"; // "auto", "cuda", or "cpu"
     }
 
     private void GpuRefreshCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -380,6 +392,18 @@ public partial class MainWindow : Window
     {
         AnalyticsService.IsEnabled = AnalyticsCheck.IsChecked ?? true;
         AnalyticsService.TrackEvent("analytics_opt_changed", new { enabled = AnalyticsService.IsEnabled });
+    }
+
+    private void DeviceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_runner == null) return; // Guard: fires during XAML init before constructor completes
+        if (DeviceCombo.SelectedItem is ComboBoxItem item && item.Tag != null)
+        {
+            var device = item.Tag.ToString() ?? "auto";
+            _appSettings.DevicePreference = device;
+            _runner.DevicePreference = device;
+            SaveAppSettings();
+        }
     }
 
     private int _silentCount = 0;

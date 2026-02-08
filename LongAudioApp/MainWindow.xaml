@@ -1,7 +1,7 @@
 <Window x:Class="LongAudioApp.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="TurboScribe Private" Height="1050" Width="1000"
+        Title="TurboScribe Private" Height="1365" Width="1000"
         Background="{StaticResource BgBrush}"
         WindowStartupLocation="CenterScreen">
 
@@ -316,7 +316,17 @@
                                       Foreground="{StaticResource TextBrush}" FontSize="13" 
                                       IsChecked="True" Margin="0,4"/>
                             <TextBlock Text="Disable Voice Activity Detection if your audio has loud background noise." 
-                                       FontSize="11" Foreground="{StaticResource TextDimBrush}" Margin="24,0,0,0"/>
+                                       FontSize="11" Foreground="{StaticResource TextDimBrush}" Margin="24,0,0,12"/>
+                            
+                            <TextBlock Text="Device (GPU / CPU)" Foreground="{StaticResource TextBrush}" FontSize="13" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="DeviceCombo" Width="200" HorizontalAlignment="Left"
+                                      SelectionChanged="DeviceCombo_SelectionChanged">
+                                <ComboBoxItem Content="Auto (GPU if available)" Tag="auto" IsSelected="True"/>
+                                <ComboBoxItem Content="GPU (CUDA)" Tag="cuda"/>
+                                <ComboBoxItem Content="CPU Only" Tag="cpu"/>
+                            </ComboBox>
+                            <TextBlock Text="GPU mode requires NVIDIA GPU with CUDA and CUDA-enabled PyTorch installed." 
+                                       FontSize="11" Foreground="{StaticResource TextDimBrush}" Margin="0,4,0,0"/>
                         </StackPanel>
                     </GroupBox>
 

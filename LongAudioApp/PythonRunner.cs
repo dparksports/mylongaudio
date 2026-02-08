@@ -26,6 +26,7 @@ public class PythonRunner : IDisposable
     public bool IsServerRunning => _serverProcess != null && !_serverProcess.HasExited;
 
     public string TranscriptDirectory { get; private set; }
+    public string DevicePreference { get; set; } = "auto"; // "auto", "cuda", or "cpu"
 
     public PythonRunner(string scriptDirectory)
     {
@@ -136,7 +137,8 @@ public class PythonRunner : IDisposable
 
     private string BuildArgs(string command, string args = "")
     {
-        return $"\"{_scriptPath}\" {command} {args}".Trim();
+        var deviceArg = $"--device {DevicePreference}";
+        return $"\"{_scriptPath}\" {command} {deviceArg} {args}".Trim();
     }
 
     private async Task SendCommandAndWaitAsync(object commandObj, string actionName)
