@@ -9,4 +9,7 @@
     <AssemblyName>LongAudioApp</AssemblyName>
     <RootNamespace>LongAudioApp</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\fast_engine.py" CopyToOutputDirectory="PreserveNewest" Link="fast_engine.py" />
+  </ItemGroup>
 </Project>
