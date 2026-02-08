@@ -17,6 +17,31 @@ public class TranscriptFileInfo
     public long CharCount { get; set; }
     public string SizeLabel => CharCount > 0 ? $"{CharCount:N0} chars" : "empty";
 
+    /// <summary>Derive the source media file from the transcript filename.</summary>
+    public string? SourceMediaPath
+    {
+        get
+        {
+            // Transcript format: {base}_transcript.txt or {base}_transcript_{model}.txt
+            var dir = FolderPath;
+            var name = Path.GetFileNameWithoutExtension(FullPath);
+
+            // Strip _transcript or _transcript_{model} suffix
+            var idx = name.IndexOf("_transcript");
+            if (idx < 0) return null;
+            var baseName = name[..idx];
+
+            // Try common media extensions
+            string[] exts = [".mp4", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm", ".wma"];
+            foreach (var ext in exts)
+            {
+                var candidate = Path.Combine(dir, baseName + ext);
+                if (File.Exists(candidate)) return candidate;
+            }
+            return null;
+        }
+    }
+
     public void ReadSize()
     {
         try { CharCount = new FileInfo(FullPath).Length; }
@@ -206,13 +231,13 @@ public partial class MainWindow : Window
             }
         }
 
-        // Also scan the directory for any _transcript.txt files we might have missed
+        // Also scan the directory for any _transcript*.txt files (including versioned)
         var dir = DirectoryBox.Text.Trim();
         if (Directory.Exists(dir))
         {
             try
             {
-                var found = Directory.GetFiles(dir, "*_transcript.txt", SearchOption.AllDirectories);
+                var found = Directory.GetFiles(dir, "*_transcript*.txt", SearchOption.AllDirectories);
                 foreach (var f in found)
                 {
                     if (!transcripts.Any(t => t.FullPath.Equals(f, StringComparison.OrdinalIgnoreCase)))
@@ -351,6 +376,8 @@ public partial class MainWindow : Window
                 TranscriptContentBox.Text = content;
                 TranscriptFileLabel.Text = info.FullPath;
                 OpenInExplorerBtn.Visibility = Visibility.Visible;
+                RetranscribePanel.Visibility = info.SourceMediaPath != null 
+                    ? Visibility.Visible : Visibility.Collapsed;
                 StatusBar.Text = $"Viewing: {info.FileName}";
             }
             catch (Exception ex)
@@ -365,6 +392,91 @@ public partial class MainWindow : Window
         if (_selectedTranscriptPath != null && File.Exists(_selectedTranscriptPath))
         {
             Process.Start("explorer.exe", $"/select,\"{_selectedTranscriptPath}\"");
+        }
+    }
+
+    private async void RetranscribeBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (TranscriptList.SelectedItem is not TranscriptFileInfo info) return;
+        var mediaPath = info.SourceMediaPath;
+        if (mediaPath == null)
+        {
+            MessageBox.Show("Could not find the source media file.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var model = (ModelSelector.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "large-v3";
+        _isScanRunning = false;
+        TranscribeStatusLabel.Text = $"Re-transcribing with {model}...";
+        StatusBar.Text = $"Re-transcribing {Path.GetFileName(mediaPath)} with {model}...";
+
+        bool useVad = !(NoVadCheck.IsChecked ?? false);
+        await _runner.RunTranscribeFileAsync(mediaPath, model, useVad);
+    }
+
+    private void SearchBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Enter) return;
+        var query = SearchBox.Text.Trim();
+        if (string.IsNullOrEmpty(query)) { RefreshTranscriptList(); return; }
+
+        var dir = DirectoryBox.Text.Trim();
+        if (!Directory.Exists(dir)) return;
+
+        // Local in-process search — fast, no Python needed
+        var queryWords = query.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var allTranscripts = TranscriptList.ItemsSource as List<TranscriptFileInfo> ?? new List<TranscriptFileInfo>();
+
+        // If list is empty, discover files first
+        if (allTranscripts.Count == 0)
+        {
+            try
+            {
+                var found = Directory.GetFiles(dir, "*_transcript*.txt", SearchOption.AllDirectories);
+                foreach (var f in found)
+                {
+                    var ti = new TranscriptFileInfo { FullPath = f };
+                    ti.ReadSize();
+                    allTranscripts.Add(ti);
+                }
+            }
+            catch { }
+        }
+
+        // Filter and score
+        var results = new List<(TranscriptFileInfo info, int score, string snippet)>();
+        foreach (var t in allTranscripts)
+        {
+            try
+            {
+                var content = File.ReadAllText(t.FullPath).ToLowerInvariant();
+                var score = queryWords.Count(w => content.Contains(w));
+                if (score == 0) continue;
+
+                // Find first matching line for snippet
+                var lines = File.ReadAllLines(t.FullPath);
+                var snippet = lines.FirstOrDefault(l => queryWords.Any(w => l.ToLowerInvariant().Contains(w))) ?? "";
+                results.Add((t, score, snippet));
+            }
+            catch { }
+        }
+
+        results.Sort((a, b) => b.score.CompareTo(a.score));
+        TranscriptList.ItemsSource = results.Select(r => r.info).ToList();
+        TranscribeStatusLabel.Text = $"Search: {results.Count} files match \"{query}\"";
+
+        // Show search results in the content area
+        if (results.Count > 0)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Search results for: \"{query}\" ({results.Count} files)\n");
+            foreach (var (info, score, snippet) in results)
+            {
+                sb.AppendLine($"--- {info.FileName} ({score}/{queryWords.Length} words matched) ---");
+                sb.AppendLine($"  {snippet}");
+                sb.AppendLine();
+            }
+            TranscriptContentBox.Text = sb.ToString();
         }
     }
 

@@ -176,13 +176,22 @@
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
                                 <TextBlock Grid.Row="0" Text="📄 Transcript Files" 
                                            FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource TextBrush}" 
-                                           Margin="10,8,10,6"/>
-                                <ListBox x:Name="TranscriptList" Grid.Row="1"
+                                           Margin="10,8,10,4"/>
+                                <!-- Search Box -->
+                                <TextBox x:Name="SearchBox" Grid.Row="1"
+                                         Background="#1A1A2A" 
+                                         Foreground="{StaticResource TextBrush}"
+                                         BorderBrush="{StaticResource BorderBrush}"
+                                         FontSize="12" Padding="6,4" Margin="8,0,8,4"
+                                         KeyDown="SearchBox_KeyDown"
+                                         ToolTip="Type and press Enter to search across all transcripts"/>
+                                <ListBox x:Name="TranscriptList" Grid.Row="2"
                                          Background="Transparent" BorderThickness="0"
                                          Foreground="{StaticResource TextBrush}"
                                          FontSize="11" Padding="4"
@@ -227,23 +236,44 @@
                         <Grid Grid.Column="2">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <Grid Grid.Row="0" Margin="0,0,0,6">
+                            <!-- File info + Open Folder -->
+                            <Grid Grid.Row="0" Margin="0,0,0,4">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock x:Name="TranscriptFileLabel" Grid.Column="0"
                                            Text="Select a transcript file to view" 
-                                           FontSize="12" Foreground="{StaticResource TextDimBrush}"/>
+                                           FontSize="12" Foreground="{StaticResource TextDimBrush}"
+                                           TextTrimming="CharacterEllipsis"/>
                                 <Button x:Name="OpenInExplorerBtn" Grid.Column="1"
                                         Content="📂 Open Folder" 
                                         Style="{StaticResource AccentButton}"
                                         Click="OpenInExplorerBtn_Click"
                                         Visibility="Collapsed" FontSize="11" Padding="10,4"/>
                             </Grid>
-                            <TextBox x:Name="TranscriptContentBox" Grid.Row="1" IsReadOnly="True"
+                            <!-- Re-transcribe controls -->
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,6"
+                                        x:Name="RetranscribePanel" Visibility="Collapsed">
+                                <TextBlock Text="Model:" Foreground="{StaticResource TextDimBrush}" 
+                                           FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <ComboBox x:Name="ModelSelector" Width="140" FontSize="11"
+                                          Background="#1A1A2A" Foreground="{StaticResource TextBrush}"
+                                          BorderBrush="{StaticResource BorderBrush}" SelectedIndex="4">
+                                    <ComboBoxItem Content="tiny.en"/>
+                                    <ComboBoxItem Content="base.en"/>
+                                    <ComboBoxItem Content="small.en"/>
+                                    <ComboBoxItem Content="medium.en"/>
+                                    <ComboBoxItem Content="large-v3"/>
+                                </ComboBox>
+                                <Button x:Name="RetranscribeBtn" Content="🔄 Re-transcribe" 
+                                        Style="{StaticResource AccentButton}" Margin="8,0,0,0"
+                                        Click="RetranscribeBtn_Click" FontSize="11" Padding="10,4"/>
+                            </StackPanel>
+                            <TextBox x:Name="TranscriptContentBox" Grid.Row="2" IsReadOnly="True"
                                      Background="{StaticResource SurfaceBrush}"
                                      Foreground="{StaticResource TextBrush}"
                                      BorderBrush="{StaticResource BorderBrush}"

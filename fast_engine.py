@@ -334,7 +334,9 @@ def run_transcribe_file(file_path, model_name="large-v3", use_vad=True):
 
     if lines:
         base = os.path.splitext(file_path)[0]
-        out_path = f"{base}_transcript.txt"
+        # Use model name in filename for versioning
+        safe_model = model_name.replace("/", "_").replace("\\", "_")
+        out_path = f"{base}_transcript_{safe_model}.txt"
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(f"--- Transcription ({model_name}, {info.duration:.1f}s) ---\n")
             for line in lines:

@@ -55,6 +55,19 @@ public class PythonRunner
         await RunProcessAsync(args);
     }
 
+    public async Task RunTranscribeFileAsync(string file, string model, bool useVad)
+    {
+        var args = $"\"{_scriptPath}\" transcribe_file \"{file}\" --model {model}";
+        if (!useVad) args += " --no-vad";
+        await RunProcessAsync(args);
+    }
+
+    public async Task RunSearchTranscriptsAsync(string directory, string query)
+    {
+        var args = $"\"{_scriptPath}\" search_transcripts --dir \"{directory}\" --query \"{query}\"";
+        await RunProcessAsync(args);
+    }
+
     public void Cancel()
     {
         _cts?.Cancel();
