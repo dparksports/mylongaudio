@@ -116,7 +116,7 @@ def run_scanner(file_path, use_vad=True):
     if segment_count == 0:
         print("[INFO] No speech detected.")
 
-def run_batch_scanner(directory, use_vad=True, report_path=None):
+def run_batch_scanner(directory, use_vad=True, report_path=None, model=None):
     """
     MODE 3: BATCH SCOUT
     Scans all media files in a directory for voice activity.
@@ -126,9 +126,12 @@ def run_batch_scanner(directory, use_vad=True, report_path=None):
     total = len(media_files)
     print(f"[BATCH] Found {total} media files in: {directory}")
     print(f"[BATCH] VAD: {'ON' if use_vad else 'OFF (outdoor/noisy mode)'}")
-    print(f"[BATCH] Loading tiny.en model (one-time)...")
 
-    model = WhisperModel("tiny.en", device=DEVICE, compute_type=COMPUTE)
+    if model is None:
+        print(f"[BATCH] Loading tiny.en model (one-time)...")
+        model = WhisperModel("tiny.en", device=DEVICE, compute_type=COMPUTE)
+    else:
+        print(f"[BATCH] Using pre-loaded model...")
 
     results = []
     files_with_voice = 0
@@ -523,3 +526,72 @@ if __name__ == "__main__":
             print("Error: Provide a search query with --query")
             exit(1)
         run_search_transcripts(directory, args.query)
+    elif args.mode == "server":
+        run_server()
+
+def run_server():
+    print("[SERVER] Initializing engine...", flush=True)
+    
+    # Pre-load Tiny model for fast scanning
+    print("[SERVER] Loading core models...", flush=True)
+    try:
+        # Load tiny model to cache it in VRAM/RAM
+        scanner_model = WhisperModel("tiny.en", device=DEVICE, compute_type=COMPUTE)
+        print("[SERVER] Engine ready.", flush=True)
+    except Exception as e:
+        print(f"[SERVER] Init failed: {e}", flush=True)
+        return
+
+    # Keep large model in memory if triggered? For now, load on demand to save VRAM? 
+    # Or maybe keep one global 'current_model' and swap if needed.
+    current_model = scanner_model
+    current_model_name = "tiny.en"
+
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if not line: break
+            
+            cmd = json.loads(line)
+            action = cmd.get("action")
+            
+            if action == "ping":
+                print(json.dumps({"status": "pong"}), flush=True)
+                
+            elif action == "scan":
+                # Ensure tiny model is loaded
+                if current_model_name != "tiny.en":
+                     print("[SERVER] Switching to tiny.en model...", flush=True)
+                     current_model = WhisperModel("tiny.en", device=DEVICE, compute_type=COMPUTE)
+                     current_model_name = "tiny.en"
+                
+                directory = cmd.get("directory")
+                use_vad = cmd.get("use_vad", True)
+                report_path = cmd.get("report_path")
+                
+                run_batch_scanner(directory, use_vad=use_vad, report_path=report_path, model=current_model)
+                print(json.dumps({"status": "complete", "action": "scan"}), flush=True)
+
+            elif action == "transcribe":
+                # Ensure large-v3 (or requested model) is loaded
+                model_name = cmd.get("model", "large-v3")
+                if current_model_name != model_name:
+                    print(f"[SERVER] Switching to {model_name} model...", flush=True)
+                    current_model = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE)
+                    current_model_name = model_name
+                
+                file_path = cmd.get("file")
+                start = cmd.get("start")
+                end = cmd.get("end")
+                output_dir = cmd.get("output_dir")
+                
+                run_transcriber(file_path, start, end, model=current_model, output_dir=output_dir)
+                print(json.dumps({"status": "complete", "action": "transcribe"}), flush=True) 
+
+            elif action == "exit":
+                break
+                
+        except json.JSONDecodeError:
+            print(f"[ERROR] Invalid JSON command", flush=True)
+        except Exception as e:
+            print(f"[ERROR] {e}", flush=True)

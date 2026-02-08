@@ -340,13 +340,25 @@
                     <GroupBox Header="Engine Process" BorderBrush="{StaticResource BorderBrush}" 
                               Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,16" Padding="12">
                         <StackPanel>
+                            <CheckBox x:Name="StartEngineCheck" Content="Start Engine Logic on App Launch (Requires Restart)" 
+                                      IsChecked="False" Checked="StartEngineCheck_Changed" Unchecked="StartEngineCheck_Changed"
+                                      Margin="0,0,0,12"/>
+                            
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                 <TextBlock Text="Status: " Foreground="{StaticResource TextDimBrush}"/>
                                 <TextBlock x:Name="EngineStatusLabel" Text="Idle" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
                             </StackPanel>
-                            <Button Content="💀 Force Kill Background Processes" Width="220" HorizontalAlignment="Left"
-                                    Style="{StaticResource AccentButton}" Click="KillEngineBtn_Click"
-                                    ToolTip="Forcefully terminate any stuck fast_engine.exe processes"/>
+                            
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="EngineToggleBtn" Content="⚡ Start Engine Server" Width="160" HorizontalAlignment="Left"
+                                        Style="{StaticResource AccentButton}" Click="EngineToggleBtn_Click"
+                                        ToolTip="Start the persistent engine server for faster scans"/>
+                                        
+                                <Button Content="💀 Force Kill" Width="100" HorizontalAlignment="Left" Margin="12,0,0,0"
+                                        Style="{StaticResource AccentButton}" Click="KillEngineBtn_Click"
+                                        Background="#332222" Foreground="#FF6666"
+                                        ToolTip="Forcefully terminate any stuck fast_engine.exe processes"/>
+                            </StackPanel>
                         </StackPanel>
                     </GroupBox>
 

@@ -6,11 +6,14 @@
 
 > **🌟 Exceptional Noise Handling:** Works perfectly with **noisy outdoor meetings** involving car traffic, planes, lawn mowers, wind, and barking dogs.
 
-# TurboScribe Private (Bundled Edition)
+# TurboScribe Private
 
-A private, offline transcription tool powered by `faster-whisper`. Run unlimited scans and transcriptions locally on your machine.
+**TurboScribe Private** is a secure, offline transcription tool powered by **faster-whisper** and **Whisper Large-v3**. It runs entirely on your local machine, ensuring no audio data ever leaves your device.
 
-[![Download v1.3.4](https://img.shields.io/badge/Download-v1.3.4-blue?style=for-the-badge&logo=windows)](https://github.com/dparksports/turboscribe/releases/download/v1.3.4/TurboScribePrivate-v1.3.4-win-x64.zip)** (Requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
+## 📥 Download
+
+**[Download TurboScribe Private v1.3.5 (Windows x64)](https://github.com/dparksports/turboscribe-private/releases/download/v1.3.5/TurboScribePrivate-v1.3.5-win-x64.zip)**  
+*(Extract the zip and run `TurboScribePrivate.exe`)*
 
 ## 🔒 Why TurboScribe Private?
 

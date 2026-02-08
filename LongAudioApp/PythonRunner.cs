@@ -13,7 +13,9 @@ public class PythonRunner : IDisposable
     private readonly string _pythonPath;
     private readonly bool _useBundled;
     private Process? _currentProcess;
+    private Process? _serverProcess; // Persistent engine process
     private CancellationTokenSource? _cts;
+    private readonly SemaphoreSlim _serverLock = new(1, 1);
 
     public event Action<string>? OutputReceived;
     public event Action<int, int, string>? ProgressUpdated; // current, total, filename
@@ -22,6 +24,7 @@ public class PythonRunner : IDisposable
     public event Action<bool>? RunningChanged;
 
     public bool IsRunning { get; private set; }
+    public bool IsServerRunning => _serverProcess != null && !_serverProcess.HasExited;
 
     public string TranscriptDirectory { get; private set; }
 
@@ -45,6 +48,90 @@ public class PythonRunner : IDisposable
         }
     }
 
+    public async Task StartServerAsync()
+    {
+        if (IsServerRunning) return;
+
+        await _serverLock.WaitAsync();
+        try
+        {
+            if (IsServerRunning) return;
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = _pythonPath,
+                Arguments = BuildArgs("server"),
+                WorkingDirectory = _useBundled ? Path.GetDirectoryName(_pythonPath) : Path.GetDirectoryName(_scriptPath),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8 // Assume same encoding
+            };
+
+            if (!_useBundled)
+            {
+                var envPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+                startInfo.EnvironmentVariables["PATH"] = Path.Combine(VENV_PATH, "Scripts") + ";" + envPath;
+                startInfo.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+            }
+            else
+            {
+                startInfo.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+            }
+
+            _serverProcess = new Process { StartInfo = startInfo };
+            _serverProcess.Start();
+            _serverProcess.BeginOutputReadLine();
+            _serverProcess.BeginErrorReadLine();
+            
+            // We'll hook up events on demand or globally? 
+            // For now, let's just log server output globally
+            _serverProcess.ErrorDataReceived += (s, e) => { if (e.Data != null) OutputReceived?.Invoke($"[SERVER_ERR] {e.Data}"); };
+
+            OutputReceived?.Invoke("[SERVER] Engine started.");
+        }
+        catch (Exception ex)
+        {
+            OutputReceived?.Invoke($"[SERVER] Failed to start: {ex.Message}");
+            _serverProcess = null;
+        }
+        finally
+        {
+            _serverLock.Release();
+        }
+    }
+
+    public async Task StopServerAsync()
+    {
+        await _serverLock.WaitAsync();
+        try
+        {
+            if (_serverProcess != null && !_serverProcess.HasExited)
+            {
+                try 
+                { 
+                    var json = System.Text.Json.JsonSerializer.Serialize(new { action = "exit" });
+                    await _serverProcess.StandardInput.WriteLineAsync(json);
+                    await _serverProcess.StandardInput.FlushAsync();
+                    await _serverProcess.WaitForExitAsync(new CancellationTokenSource(2000).Token);
+                } 
+                catch { }
+                
+                if (!_serverProcess.HasExited) _serverProcess.Kill();
+                _serverProcess.Dispose();
+                _serverProcess = null;
+                OutputReceived?.Invoke("[SERVER] Engine stopped.");
+            }
+        }
+        finally
+        {
+            _serverLock.Release();
+        }
+    }
+
     private string BuildArgs(string command, string args = "")
     {
         if (_useBundled)
@@ -57,6 +144,84 @@ public class PythonRunner : IDisposable
         }
     }
 
+    private async Task SendCommandAndWaitAsync(object commandObj, string actionName)
+    {
+        if (_serverProcess == null || _serverProcess.HasExited)
+             throw new InvalidOperationException("Server is not running.");
+
+        if (IsRunning) throw new InvalidOperationException("A process is already running.");
+        
+        IsRunning = true;
+        RunningChanged?.Invoke(true);
+        _cts = new CancellationTokenSource();
+
+        var tcs = new TaskCompletionSource<bool>();
+        
+        DataReceivedEventHandler handler = (s, e) => 
+        {
+            if (string.IsNullOrEmpty(e.Data)) return;
+            
+            // Forward output to UI
+            OutputReceived?.Invoke(e.Data);
+            
+            // Validation/Parsing
+            try 
+            {
+                if (e.Data.Trim().StartsWith("{") && e.Data.Trim().EndsWith("}"))
+                {
+                    var doc = System.Text.Json.JsonDocument.Parse(e.Data);
+                    if (doc.RootElement.TryGetProperty("status", out var statusProp) && 
+                        statusProp.GetString() == "complete" &&
+                        doc.RootElement.TryGetProperty("action", out var actionProp) &&
+                        actionProp.GetString() == actionName)
+                    {
+                        tcs.TrySetResult(true);
+                    }
+                }
+            }
+            catch {} // Ignore parsing errors for non-JSON lines
+
+            // Also parse progress from server output
+            var match = ProgressRegex.Match(e.Data);
+            if (match.Success)
+            {
+                var c = int.Parse(match.Groups[1].Value);
+                var t = int.Parse(match.Groups[2].Value);
+                var f = match.Groups[3].Value.Trim();
+                ProgressUpdated?.Invoke(c, t, f);
+            }
+            // Parse voice detection
+            if (e.Data.Contains("[VOICE]")) VoiceDetected?.Invoke(e.Data);
+            if (e.Data.Contains("[ERROR]")) ErrorOccurred?.Invoke(e.Data);
+        };
+
+        _serverProcess.OutputDataReceived += handler;
+
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(commandObj);
+            await _serverProcess.StandardInput.WriteLineAsync(json);
+            await _serverProcess.StandardInput.FlushAsync();
+            
+            // Wait for completion or cancellation
+            using (var registration = _cts.Token.Register(() => tcs.TrySetCanceled()))
+            {
+                await tcs.Task;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            OutputReceived?.Invoke("[CANCELLED] Operation was cancelled.");
+        }
+        finally
+        {
+            _serverProcess.OutputDataReceived -= handler;
+            IsRunning = false;
+            RunningChanged?.Invoke(false);
+            _cts = null;
+        }
+    }
+
     public async Task RunBatchScanAsync(string directory, bool useVad, string? reportPath = null)
     {
         // Strip trailing backslash to prevent it escaping the closing quote on the command line
@@ -64,15 +229,29 @@ public class PythonRunner : IDisposable
         if (safeDir.Length == 2 && safeDir[1] == ':') safeDir += "\\"; 
         if (safeDir.EndsWith("\\")) safeDir = safeDir.TrimEnd('\\');
         
-        var cmdArgs = $"--dir \"{safeDir}\"";
-        if (reportPath != null) cmdArgs += $" --report \"{reportPath}\"";
-        if (!useVad) cmdArgs += " --no-vad";
-        
-        await RunProcessAsync(BuildArgs("batch_scan", cmdArgs));
+        if (IsServerRunning)
+        {
+            await SendCommandAndWaitAsync(new 
+            { 
+                action = "scan", 
+                directory = safeDir, 
+                use_vad = useVad, 
+                report_path = reportPath 
+            }, "scan");
+        }
+        else
+        {
+            var cmdArgs = $"--dir \"{safeDir}\"";
+            if (reportPath != null) cmdArgs += $" --report \"{reportPath}\"";
+            if (!useVad) cmdArgs += " --no-vad";
+            
+            await RunProcessAsync(BuildArgs("batch_scan", cmdArgs));
+        }
     }
 
     public async Task RunBatchTranscribeAsync(string? reportPath = null)
     {
+        // Server mode not implemented for this action yet
         var cmdArgs = $"--output-dir \"{TranscriptDirectory}\"";
         if (reportPath != null) cmdArgs += $" --report \"{reportPath}\"";
         await RunProcessAsync(BuildArgs("batch_transcribe", cmdArgs));
@@ -82,6 +261,10 @@ public class PythonRunner : IDisposable
     {
         var safeDir = directory.TrimEnd('\\', '/');
         if (safeDir.EndsWith("\\")) safeDir = safeDir.TrimEnd('\\');
+
+        // Server mode not implemented for this specific action yet in fast_engine.py?
+        // Checked fast_engine.py, I haven't added "batch_transcribe_dir" to server mode.
+        // So fallback to legacy always.
         
         var cmdArgs = $"--dir \"{safeDir}\" --output-dir \"{TranscriptDirectory}\"";
         if (!useVad) cmdArgs += " --no-vad";
@@ -90,12 +273,28 @@ public class PythonRunner : IDisposable
 
     public async Task RunTranscribeAsync(string file, double start, double end)
     {
-        var cmdArgs = $"\"{file}\" --start {start} --end {end} --output-dir \"{TranscriptDirectory}\"";
-        await RunProcessAsync(BuildArgs("transcribe", cmdArgs));
+        if (IsServerRunning)
+        {
+            await SendCommandAndWaitAsync(new 
+            { 
+                action = "transcribe", 
+                file = file, 
+                start = start, 
+                end = end, 
+                output_dir = TranscriptDirectory
+            }, "transcribe");
+        }
+        else
+        {
+            var cmdArgs = $"\"{file}\" --start {start} --end {end} --output-dir \"{TranscriptDirectory}\"";
+            await RunProcessAsync(BuildArgs("transcribe", cmdArgs));
+        }
     }
 
     public async Task RunTranscribeFileAsync(string file, string model, bool useVad)
     {
+         // "transcribe_file" mode also not added to server loop yet.
+         // Fallback to legacy.
         var cmdArgs = $"\"{file}\" --model {model} --output-dir \"{TranscriptDirectory}\"";
         if (!useVad) cmdArgs += " --no-vad";
         await RunProcessAsync(BuildArgs("transcribe_file", cmdArgs));
@@ -237,5 +436,9 @@ public class PythonRunner : IDisposable
         Cancel();
         _cts?.Dispose();
         _currentProcess?.Dispose();
+        
+        // Kill server process
+        try { if (_serverProcess != null && !_serverProcess.HasExited) _serverProcess.Kill(); } catch {}
+        _serverProcess?.Dispose();
     }
 }
