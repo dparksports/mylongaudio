@@ -71,9 +71,29 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        _scriptDir = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..\\..\\..\\.."));
+        // Priority 1: Same directory as exe (published/release builds)
+        _scriptDir = AppDomain.CurrentDomain.BaseDirectory;
         if (!File.Exists(Path.Combine(_scriptDir, "fast_engine.py")))
+        {
+            // Priority 2: Dev build (4 levels up from bin/Debug/net8.0-windows/)
+            _scriptDir = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..\\..\\..\\.."));
+        }
+        if (!File.Exists(Path.Combine(_scriptDir, "fast_engine.py")))
+        {
+            // Priority 3: One level up
             _scriptDir = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".."));
+        }
+        if (!File.Exists(Path.Combine(_scriptDir, "fast_engine.py")))
+        {
+            MessageBox.Show(
+                $"Could not find 'fast_engine.py' in any expected location.\n\n" +
+                $"Searched:\n" +
+                $"  • {AppDomain.CurrentDomain.BaseDirectory}\n" +
+                $"  • {Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..\\..\\..\\.."))}\n" +
+                $"  • {Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".."))}\n\n" +
+                $"Scan and transcribe will not work.",
+                "Missing Script", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
 
         var appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LongAudioApp");
         Directory.CreateDirectory(appDataDir);

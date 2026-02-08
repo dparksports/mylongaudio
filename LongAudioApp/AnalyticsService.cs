@@ -49,7 +49,8 @@ public static class AnalyticsService
     public static void Initialize()
     {
         LoadState();
-        RefreshSession();
+        // Trigger app_start, which will also trigger session_start if needed due to our new logic
+        TrackEvent("app_start");
     }
 
     /// <summary>Fire-and-forget an event with optional parameters.</summary>
@@ -59,17 +60,39 @@ public static class AnalyticsService
 
         try
         {
-            RefreshSession();
-
-            // Build params dict with session fields injected
-            var paramsDict = new System.Collections.Generic.Dictionary<string, object>
+            // check for session rotation
+            if (CheckSession(out bool isNewSession))
             {
-                ["session_id"] = _sessionId,
-                ["engagement_time_msec"] = "100"
-            };
+                SaveState();
+                if (isNewSession)
+                {
+                    // Recursively send session_start (safe because session is now fresh)
+                    await SendEventInternal("session_start");
+                }
+            }
 
-            // Merge any extra params
-            if (extraParams != null)
+            // Send legitimate event
+            await SendEventInternal(eventName, extraParams);
+        }
+        catch
+        {
+            // Analytics should never crash the app
+        }
+    }
+
+    private static async Task SendEventInternal(string eventName, object? extraParams = null)
+    {
+        // Build basic params (engagement_time_msec must be a number, not string)
+        var paramsDict = new System.Collections.Generic.Dictionary<string, object>
+        {
+            ["session_id"] = _sessionId,
+            ["engagement_time_msec"] = 100 
+        };
+
+        // Merge extra params
+        if (extraParams != null)
+        {
+            try 
             {
                 var json = JsonSerializer.Serialize(extraParams);
                 var extra = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(json);
@@ -79,38 +102,36 @@ public static class AnalyticsService
                         paramsDict[kv.Key] = kv.Value;
                 }
             }
-
-            var payload = new
-            {
-                client_id = _clientId,
-                user_properties = new
-                {
-                    country = new { value = System.Globalization.RegionInfo.CurrentRegion.TwoLetterISORegionName },
-                    language = new { value = System.Globalization.CultureInfo.CurrentCulture.Name },
-                    app_version = new { value = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown" },
-                    platform = new { value = "windows" }
-                },
-                events = new[]
-                {
-                    new
-                    {
-                        name = eventName,
-                        @params = paramsDict
-                    }
-                }
-            };
-
-            var url = $"{Endpoint}?measurement_id={MeasurementId}&api_secret={ApiSecret}";
-            var body = JsonSerializer.Serialize(payload);
-            await _httpClient.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
-
-            _lastActivity = DateTime.UtcNow;
-            SaveState();
+            catch { /* ignore param serialization errors */ }
         }
-        catch
+
+        var payload = new
         {
-            // Analytics should never crash the app
-        }
+            client_id = _clientId,
+            user_properties = new
+            {
+                // Rename 'country' to 'device_region' to avoid conflict with GA4 Auto-Geo
+                device_region = new { value = System.Globalization.RegionInfo.CurrentRegion.TwoLetterISORegionName ?? "XX" },
+                language = new { value = System.Globalization.CultureInfo.CurrentCulture.Name },
+                app_version = new { value = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown" },
+                platform = new { value = "windows" }
+            },
+            events = new[]
+            {
+                new
+                {
+                    name = eventName,
+                    @params = paramsDict
+                }
+            }
+        };
+
+        var url = $"{Endpoint}?measurement_id={MeasurementId}&api_secret={ApiSecret}";
+        var body = JsonSerializer.Serialize(payload);
+        await _httpClient.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
+
+        _lastActivity = DateTime.UtcNow;
+        SaveState();
     }
 
     /// <summary>Convenience fire-and-forget wrapper (no await needed).</summary>
@@ -121,20 +142,27 @@ public static class AnalyticsService
 
     // ===== Session Management =====
 
-    private static void RefreshSession()
+    /// <summary>
+    /// Checks if session is expired or missing. 
+    /// Returns true if state changed (new session created or loaded).
+    /// </summary>
+    private static bool CheckSession(out bool isNewSession)
     {
-        if (!IsEnabled) return;
+        isNewSession = false;
+        if (!IsEnabled) return false;
 
         var now = DateTime.UtcNow;
         var elapsed = now - _lastActivity;
 
         if (string.IsNullOrEmpty(_sessionId) || elapsed.TotalMinutes > SessionTimeoutMinutes)
         {
-            // New session
             _sessionId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
             _lastActivity = now;
-            SaveState();
+            isNewSession = true;
+            return true;
         }
+        
+        return false;
     }
 
     // ===== Persistence =====
