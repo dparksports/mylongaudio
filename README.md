@@ -3,6 +3,10 @@
 **GPU-accelerated batch voice scanner & transcription tool** for large media libraries.  
 Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) with GPU support for fast, accurate transcription.
 
+## 📥 Download
+
+**[⬇️ Download v1.1.0](https://github.com/dparksports/mylongaudio/releases/download/v1.1.0/LongAudioApp-v1.1.0-win-x64.zip)** (98 KB, requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
+
 ## ✨ Features
 
 - **Voice Detection Scan** — Quickly scan directories for media files containing voice/speech using `silero-vad`
@@ -10,8 +14,10 @@ Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) w
 - **Live Progress** — Real-time updates as each file is processed; view completed transcripts immediately
 - **Model Selection** — Choose Whisper model size (`tiny.en` → `large-v3`) for speed vs accuracy tradeoff
 - **Multi-Version Transcripts** — Re-transcribe files with different models; each version saved as `_transcript_{model}.txt`
+- **Compare Versions** — Color-coded diff view to compare transcript versions side by side (🔴 red / 🟢 green highlighting)
 - **Transcript Search** — Search across all transcripts by keyword with relevance scoring
 - **Dark Theme WPF UI** — Modern Windows desktop app with tabbed interface
+- **GA4 Analytics** — Session-aware telemetry with persistent client_id
 
 ## 🛠️ Tech Stack
 
@@ -35,7 +41,7 @@ Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) w
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/mylongaudio.git
+git clone https://github.com/dparksports/mylongaudio.git
 cd mylongaudio
 
 # 2. Create Python environment
@@ -57,20 +63,22 @@ dotnet run --project LongAudioApp
 1. **Scan Tab** — Set directory path, click **Start Scan** to detect voice in media files
 2. **Transcribe Tab** — Use **Transcribe Voice Only** (scan-based) or **Transcribe All Files** (no scan needed)
 3. **Search** — Type keywords in the search box and press Enter to find across all transcripts
-4. **Re-transcribe** — Select a transcript, pick a model from the dropdown, click **Re-transcribe**
+4. **Re-transcribe** — Select a transcript, pick a model from the dropdown, click **🔄 Re-transcribe**
+5. **Compare** — After re-transcribing with a different model, click **📊 Compare** to see a color-coded diff
 
 ## 📁 Project Structure
 
 ```
 mylongaudio/
-├── fast_engine.py          # Python transcription engine (7 modes)
-├── LongAudioApp/           # WPF desktop application
-│   ├── MainWindow.xaml      # UI layout (dark theme)
-│   ├── MainWindow.xaml.cs   # Application logic
-│   ├── PythonRunner.cs      # Python subprocess manager
-│   └── ScanResult.cs        # Data models
-├── setup_env.bat           # Environment setup script
-└── LICENSE                 # Apache 2.0
+├── fast_engine.py              # Python transcription engine (7 modes)
+├── LongAudioApp/               # WPF desktop application
+│   ├── MainWindow.xaml          # UI layout (dark theme)
+│   ├── MainWindow.xaml.cs       # Application logic
+│   ├── PythonRunner.cs          # Python subprocess manager
+│   ├── AnalyticsService.cs      # GA4 Measurement Protocol
+│   └── ScanResult.cs            # Data models
+├── setup_env.bat               # Environment setup script
+└── LICENSE                     # Apache 2.0
 ```
 
 ## 📋 Transcription Modes
