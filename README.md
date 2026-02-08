@@ -5,7 +5,7 @@ Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) w
 
 ## 📥 Download
 
-**[⬇️ Download v1.1.0](https://github.com/dparksports/mylongaudio/releases/download/v1.1.0/LongAudioApp-v1.1.0-win-x64.zip)** (98 KB, requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
+**[⬇️ Download v1.3.0](https://github.com/dparksports/mylongaudio/releases/download/v1.3.0/LongAudioApp-v1.3.0-win-x64.zip)** (Requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
 
 ## ✨ Features
 
@@ -18,6 +18,8 @@ Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) w
 - **Transcript Search** — Search across all transcripts by keyword with relevance scoring
 - **Dark Theme WPF UI** — Modern Windows desktop app with tabbed interface
 - **GA4 Analytics** — Session-aware telemetry with persistent client_id
+- **Silent File Tracking** — Detects and lists metadata-only/silent files (viewable list)
+- **Explorer Integration** — Right-click transcripts to Open File or Open Folder
 
 ## 🛠️ Tech Stack
 

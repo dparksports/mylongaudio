@@ -31,7 +31,12 @@ public class PythonRunner
     public async Task RunBatchScanAsync(string directory, bool useVad)
     {
         // Strip trailing backslash to prevent it escaping the closing quote on the command line
+        // Ensure path does not end in backslash to prevent quote escaping
         var safeDir = directory.TrimEnd('\\', '/');
+        if (safeDir.Length == 2 && safeDir[1] == ':') safeDir += "\\"; // Restore backslash for root drive C:\ -> "C:\" is bad, but "C:/" or "C:" is fine.
+        // Actually, "C:" is safest. "C:\" + quote -> escaped quote.
+        if (safeDir.EndsWith("\\")) safeDir = safeDir.TrimEnd('\\');
+        
         var args = $"\"{_scriptPath}\" batch_scan --dir \"{safeDir}\"";
         if (!useVad) args += " --no-vad";
         await RunProcessAsync(args);
@@ -47,6 +52,7 @@ public class PythonRunner
     public async Task RunBatchTranscribeDirAsync(string directory, bool useVad)
     {
         var safeDir = directory.TrimEnd('\\', '/');
+        if (safeDir.EndsWith("\\")) safeDir = safeDir.TrimEnd('\\'); // Double safety
         var args = $"\"{_scriptPath}\" batch_transcribe_dir --dir \"{safeDir}\"";
         if (!useVad) args += " --no-vad";
         await RunProcessAsync(args);

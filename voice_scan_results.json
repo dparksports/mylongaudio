@@ -1,7 +1,36 @@
 {
-  "scan_date": "2026-02-08T01:53:35.448366",
-  "directory": "C:\" --no-vad",
-  "total_files": 0,
+  "scan_date": "2026-02-08T11:26:26.348311",
+  "directory": "test_media_scan",
+  "total_files": 7,
   "files_with_voice": 0,
-  "results": []
+  "results": [
+    {
+      "file": "C:\\Users\\k2\\mylongaudio\\test_media_scan\\test.3gp",
+      "error": "[Errno 1094995529] Invalid data found when processing input: 'C:\\\\Users\\\\k2\\\\mylongaudio\\\\test_media_scan\\\\test.3gp'"
+    },
+    {
+      "file": "C:\\Users\\k2\\mylongaudio\\test_media_scan\\test.m4v",
+      "error": "tuple index out of range"
+    },
+    {
+      "file": "C:\\Users\\k2\\mylongaudio\\test_media_scan\\test.mp3",
+      "error": "[Errno 1094995529] Invalid data found when processing input: 'C:\\\\Users\\\\k2\\\\mylongaudio\\\\test_media_scan\\\\test.mp3'"
+    },
+    {
+      "file": "C:\\Users\\k2\\mylongaudio\\test_media_scan\\test.mpg",
+      "error": "[Errno 1094995529] Invalid data found when processing input: 'C:\\\\Users\\\\k2\\\\mylongaudio\\\\test_media_scan\\\\test.mpg'"
+    },
+    {
+      "file": "C:\\Users\\k2\\mylongaudio\\test_media_scan\\test.ogg",
+      "error": "[Errno 541478725] End of file: 'C:\\\\Users\\\\k2\\\\mylongaudio\\\\test_media_scan\\\\test.ogg'"
+    },
+    {
+      "file": "C:\\Users\\k2\\mylongaudio\\test_media_scan\\test.ts",
+      "error": "[Errno 1094995529] Invalid data found when processing input: 'C:\\\\Users\\\\k2\\\\mylongaudio\\\\test_media_scan\\\\test.ts'"
+    },
+    {
+      "file": "C:\\Users\\k2\\mylongaudio\\test_media_scan\\test.wma",
+      "error": "[Errno 1094995529] Invalid data found when processing input: 'C:\\\\Users\\\\k2\\\\mylongaudio\\\\test_media_scan\\\\test.wma'"
+    }
+  ]
 }

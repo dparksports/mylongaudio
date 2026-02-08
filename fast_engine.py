@@ -9,25 +9,47 @@ from datetime import datetime
 DEVICE = "cuda"
 COMPUTE = "float16"
 
-MEDIA_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wav', '.mp3', '.flac', '.m4a', '.webm', '.aac'}
+MEDIA_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wav', '.mp3', '.flac', '.m4a', '.webm', '.aac', '.wma', '.ogg', '.m4v', '.3gp', '.ts', '.mpg', '.mpeg'}
 
 def find_media_files(directory):
     """Recursively find all media files in a directory."""
+    # Robustly handle potential argument parsing artifacts (e.g. trailing quotes)
+    if directory.endswith('"'): directory = directory[:-1]
+    
     # Normalize bare drive letters: 'C:' -> 'C:\' (otherwise os.walk uses CWD on that drive)
-    # Note: os.path.abspath('C:') returns CWD on C:, so we check explicitly
     if len(directory) == 2 and directory[1] == ':':
         directory = directory + os.sep
     elif not os.path.isabs(directory):
         directory = os.path.abspath(directory)
 
+    print(f"[DEBUG] Searching directory: {directory}")
+    debug_log_path = os.path.join(os.path.dirname(os.path.abspath(directory)), "scan_debug.log")
+    
     media_files = []
-    def _walk_error(err):
-        print(f"  [SKIP] {err}")
+    
+    try:
+        with open(debug_log_path, "w", encoding="utf-8") as log:
+            log.write(f"Scanning directory: {directory}\n")
+            log.write(f"Extensions: {MEDIA_EXTENSIONS}\n")
+            
+            # Enable followlinks to find files in symlinked folders
+            for root, dirs, files in os.walk(directory, followlinks=True):
+                log.write(f"\nVisiting: {root}\n")
+                for f in files:
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext in MEDIA_EXTENSIONS:
+                        full_path = os.path.join(root, f)
+                        media_files.append(full_path)
+                        log.write(f"  [ACCEPT] {f}\n")
+                    else:
+                        log.write(f"  [IGNORE] {f} ({ext})\n")
+    except Exception as e:
+        print(f"[ERROR] Discovery failed: {e}")
+        try:
+             with open(debug_log_path, "a", encoding="utf-8") as log:
+                 log.write(f"[ERROR] {e}\n")
+        except: pass
 
-    for root, dirs, files in os.walk(directory, onerror=_walk_error):
-        for f in files:
-            if os.path.splitext(f)[1].lower() in MEDIA_EXTENSIONS:
-                media_files.append(os.path.join(root, f))
     media_files.sort()
     return media_files
 
@@ -303,7 +325,7 @@ def run_batch_transcribe_dir(directory, use_vad=True):
                 print(f"[SAVED] {out_path}")
                 transcribed += 1
             else:
-                print(f"[SILENT] No speech detected")
+                print(f"[SILENT] {file_path}")
         except Exception as e:
             print(f"[ERROR] {e}")
             errors += 1
@@ -352,8 +374,9 @@ def run_transcribe_file(file_path, model_name="large-v3", use_vad=True):
             for line in lines:
                 f.write(line + "\n")
         print(f"[SAVED] {out_path}")
+        print(f"[SAVED] {out_path}")
     else:
-        print(f"[SILENT] No speech detected")
+        print(f"[SILENT] {file_path}")
 
     print(f"\n[1/1] Transcribing: {file_path}")
     print("TRANSCRIPTION COMPLETE")

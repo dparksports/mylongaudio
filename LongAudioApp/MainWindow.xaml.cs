@@ -35,7 +35,7 @@ public class TranscriptFileInfo
             var baseName = name[..idx];
 
             // Try common media extensions
-            string[] exts = [".mp4", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm", ".wma"];
+            string[] exts = [".mp4", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm", ".wma", ".m4v", ".3gp", ".ts", ".mpg", ".mpeg"];
             foreach (var ext in exts)
             {
                 var candidate = Path.Combine(dir, baseName + ext);
@@ -74,15 +74,26 @@ public partial class MainWindow : Window
         _runner = new PythonRunner(_scriptDir);
 
         WireUpRunner();
+        SetupTranscriptContextMenu();
         DetectGpu();
         TryLoadExistingResults();
     }
+
+    private int _silentCount = 0;
+    private readonly List<string> _silentFiles = new();
 
     private void WireUpRunner()
     {
         _runner.OutputReceived += line => Dispatcher.BeginInvoke(() =>
         {
             AppendLog(line);
+
+            if (line.Contains("[SILENT]"))
+            {
+                _silentCount++;
+                var path = line.Replace("[SILENT]", "").Trim();
+                if (!string.IsNullOrEmpty(path)) _silentFiles.Add(path);
+            }
 
             // When a transcript file is saved, add it to the list immediately
             if (line.Contains("[SAVED]"))
@@ -108,7 +119,7 @@ public partial class MainWindow : Window
                         current.Add(info);
                         var sorted = current.OrderByDescending(t => t.CharCount).ToList();
                         TranscriptList.ItemsSource = sorted;
-                        TranscribeStatusLabel.Text = $"Found {sorted.Count} transcript files";
+                        TranscribeStatusLabel.Text = $"Found {sorted.Count} transcript files (Silent: {_silentCount})";
                         // Auto-select the new transcript
                         TranscriptList.SelectedItem = sorted.FirstOrDefault(t => t.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
                     }
@@ -129,7 +140,7 @@ public partial class MainWindow : Window
             {
                 TranscribeProgress.Maximum = total;
                 TranscribeProgress.Value = current;
-                TranscribeStatusLabel.Text = $"[{current}/{total}] {Path.GetFileName(filename)}";
+                TranscribeStatusLabel.Text = $"[{current}/{total}] {Path.GetFileName(filename)} (Silent: {_silentCount})";
                 StatusBar.Text = $"Transcribing {current}/{total} files...";
             }
         });
@@ -151,6 +162,8 @@ public partial class MainWindow : Window
             TranscribeAllBtn.IsEnabled = !running;
             LoadResultsBtn.IsEnabled = !running;
             BrowseBtn.IsEnabled = !running;
+            ViewLogBtn.IsEnabled = !running;
+            ViewSilentBtn.IsEnabled = !running && _silentFiles.Count > 0;
             CancelScanBtn.IsEnabled = running;
             CancelTranscribeBtn.IsEnabled = running;
 
@@ -165,8 +178,8 @@ public partial class MainWindow : Window
                 }
                 else
                 {
-                    TranscribeStatusLabel.Text = "Transcription complete";
-                    StatusBar.Text = "Transcription complete";
+                    TranscribeStatusLabel.Text = $"Transcription complete. ({_silentCount} silent files)";
+                    StatusBar.Text = $"Transcription complete. ({_silentCount} silent files)";
                     // Auto-refresh transcript list after transcription
                     RefreshTranscriptList();
                 }
@@ -324,6 +337,9 @@ public partial class MainWindow : Window
         }
 
         _isScanRunning = false;
+        _silentCount = 0; // Reset counter
+        _silentFiles.Clear();
+        ViewSilentBtn.IsEnabled = false;
         TranscribeProgress.Value = 0;
         TranscribeStatusLabel.Text = "Starting transcription...";
         StatusBar.Text = "Starting batch transcription with large-v3...";
@@ -342,6 +358,9 @@ public partial class MainWindow : Window
         }
 
         _isScanRunning = false;
+        _silentCount = 0; // Reset counter
+        _silentFiles.Clear();
+        ViewSilentBtn.IsEnabled = false;
         TranscribeProgress.Value = 0;
         TranscribeStatusLabel.Text = "Starting full transcription...";
         StatusBar.Text = "Transcribing all files with large-v3 (no scan)...";
@@ -635,6 +654,76 @@ public partial class MainWindow : Window
     private void ClearLog()
     {
         LogBox.Clear();
+    }
+    private void ViewLogBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = NormalizePath(DirectoryBox.Text);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        {
+            MessageBox.Show("Select a valid directory first.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var logPath = Path.Combine(dir, "scan_debug.log");
+        if (File.Exists(logPath))
+        {
+            try { Process.Start(new ProcessStartInfo(logPath) { UseShellExecute = true }); }
+            catch (Exception ex) { MessageBox.Show("Failed to open log: " + ex.Message); }
+        }
+        else
+        {
+            MessageBox.Show($"Log file not found at:\n{logPath}\n\nRun a scan first.", "Log Not Found", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
+    private void ViewSilentBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_silentFiles.Count == 0)
+        {
+            MessageBox.Show("No silent files detected.", "Silent Files", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dir = NormalizePath(DirectoryBox.Text);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) dir = _scriptDir;
+
+        var path = Path.Combine(dir, "silent_files.txt");
+        try
+        {
+            File.WriteAllLines(path, _silentFiles);
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to open silent files list: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+
+
+    private void SetupTranscriptContextMenu()
+    {
+        var ctx = new ContextMenu();
+        var openFile = new MenuItem { Header = "Open File" };
+        openFile.Click += (s, e) =>
+        {
+            if (TranscriptList.SelectedItem is TranscriptFileInfo info && File.Exists(info.FullPath))
+            {
+                try { Process.Start(new ProcessStartInfo(info.FullPath) { UseShellExecute = true }); }
+                catch { }
+            }
+        };
+        var openFolder = new MenuItem { Header = "Open Folder" };
+        openFolder.Click += (s, e) =>
+        {
+            if (TranscriptList.SelectedItem is TranscriptFileInfo info && Directory.Exists(info.FolderPath))
+            {
+                Process.Start("explorer.exe", $"/select,\"{info.FullPath}\"");
+            }
+        };
+        ctx.Items.Add(openFile);
+        ctx.Items.Add(openFolder);
+        TranscriptList.ContextMenu = ctx;
     }
 }
 
