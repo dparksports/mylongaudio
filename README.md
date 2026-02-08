@@ -4,6 +4,8 @@
 
 **TurboScribe Private** is a **free and open-source**, GPU-accelerated desktop tool designed for professionals who need to transcribe sensitive audio — **meetings, interviews, voice memos, and lectures** — without uploading data to the cloud. **(Requires NVIDIA GPU)**
 
+> **🌟 Exceptional Noise Handling:** Works perfectly with **noisy outdoor meetings** involving car traffic, planes, lawn mowers, wind, and barking dogs.
+
 ![TurboScribe Private Screenshot](screenshot.png)
 
 ## 📥 Download
