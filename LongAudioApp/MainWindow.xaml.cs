@@ -115,6 +115,7 @@ public partial class MainWindow : Window
         // Load Settings UI
         GpuRefreshCombo.SelectedValue = _appSettings.GpuRefreshIntervalSeconds.ToString();
         StartEngineCheck.IsChecked = _appSettings.StartEngineOnLaunch;
+        SkipExistingCheck.IsChecked = _appSettings.SkipExistingFiles;
         
         // Auto-start engine if enabled
         if (_appSettings.StartEngineOnLaunch)
@@ -196,6 +197,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private void SkipExistingCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_appSettings.SkipExistingFiles != (SkipExistingCheck.IsChecked ?? false))
+        {
+            _appSettings.SkipExistingFiles = SkipExistingCheck.IsChecked ?? false;
+            SaveAppSettings();
+        }
+    }
+
     private void KillEngineBtn_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -245,6 +255,7 @@ public partial class MainWindow : Window
         public bool AnalyticsEnabled { get; set; } = true;
         public int GpuRefreshIntervalSeconds { get; set; } = 3;
         public bool StartEngineOnLaunch { get; set; } = false;
+        public bool SkipExistingFiles { get; set; } = false;
     }
 
     private void GpuRefreshCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -628,7 +639,7 @@ public partial class MainWindow : Window
         TranscribeStatusLabel.Text = "Starting transcription...";
         StatusBar.Text = "Starting batch transcription with large-v3...";
 
-        await _runner.RunBatchTranscribeAsync(_reportPath);
+        await _runner.RunBatchTranscribeAsync(_reportPath, skipExisting: _appSettings.SkipExistingFiles);
         AnalyticsService.TrackEvent("batch_transcribe");
     }
 
@@ -651,7 +662,7 @@ public partial class MainWindow : Window
 
         bool useVad = !(NoVadCheck.IsChecked ?? false);
         AnalyticsService.TrackEvent("transcribe_all");
-        await _runner.RunBatchTranscribeDirAsync(dir, useVad);
+        await _runner.RunBatchTranscribeDirAsync(dir, useVad, skipExisting: _appSettings.SkipExistingFiles);
     }
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)
@@ -753,7 +764,7 @@ public partial class MainWindow : Window
         StatusBar.Text = $"Re-transcribing {Path.GetFileName(mediaPath)} with {model}...";
 
         bool useVad = !(NoVadCheck.IsChecked ?? false);
-        await _runner.RunTranscribeFileAsync(mediaPath, model, useVad);
+        await _runner.RunTranscribeFileAsync(mediaPath, model, useVad, skipExisting: false);
     }
 
     private void SearchBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)

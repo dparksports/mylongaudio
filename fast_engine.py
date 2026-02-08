@@ -215,7 +215,7 @@ def run_batch_scanner(directory, use_vad=True, report_path=None, model=None):
                 for cmd in r["transcribe_cmds"]:
                     print(f"    > {cmd}")
 
-def run_transcriber(file_path, start, end, model=None, output_dir=None):
+def run_transcriber(file_path, start, end, model=None, output_dir=None, skip_existing=False):
     """
     MODE 2: SNIPER (Accuracy)
     Extracts the specific meeting and applies Large-v3.
@@ -249,6 +249,10 @@ def run_transcriber(file_path, start, end, model=None, output_dir=None):
     else:
         out_path = f"{os.path.splitext(file_path)[0]}_transcript.txt"
 
+    if skip_existing and os.path.exists(out_path):
+        print(f"[SKIPPING] Target exists: {out_path}")
+        return []
+
     # Append if file exists (multiple blocks for same file)
     mode = "a" if os.path.exists(out_path) else "w"
     with open(out_path, mode, encoding="utf-8") as f:
@@ -260,7 +264,7 @@ def run_transcriber(file_path, start, end, model=None, output_dir=None):
     print(f"[SAVED] {out_path}")
     return lines
 
-def run_batch_transcriber(report_path=None, output_dir=None):
+def run_batch_transcriber(report_path=None, output_dir=None, skip_existing=False):
     """
     MODE 4: BATCH SNIPER
     Reads the scan report and transcribes all detected voice segments
@@ -295,7 +299,7 @@ def run_batch_transcriber(report_path=None, output_dir=None):
             block_num += 1
             print(f"  Block {block_num}/{total_blocks}: {b['start']:.1f}s - {b['end']:.1f}s")
             try:
-                run_transcriber(file_path, b["start"], b["end"], model=model, output_dir=output_dir)
+                run_transcriber(file_path, b["start"], b["end"], model=model, output_dir=output_dir, skip_existing=skip_existing)
             except Exception as e:
                 print(f"  [ERROR] {e}")
 
@@ -305,7 +309,7 @@ def run_batch_transcriber(report_path=None, output_dir=None):
     print(f"Files processed: {len(voice_files)}")
     print(f"Blocks transcribed: {block_num}")
 
-def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None):
+def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None, skip_existing=False):
     """
     MODE 5: FULL BATCH TRANSCRIBE
     Transcribes ALL media files in a directory using large-v3.
@@ -325,6 +329,20 @@ def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None):
         os.makedirs(output_dir, exist_ok=True)
 
     for i, file_path in enumerate(media_files, 1):
+        # Check skip existing before loading model or processing? 
+        # Actually we need to calculate out_path to know if we skip.
+        # But out_path logic is duplicated inside loop.
+        
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        if output_dir:
+            out_check = os.path.join(output_dir, f"{base_name}_transcript.txt")
+        else:
+            out_check = f"{os.path.splitext(file_path)[0]}_transcript.txt"
+            
+        if skip_existing and os.path.exists(out_check):
+             print(f"\n[{i}/{total}] [SKIPPING] {file_path}")
+             continue
+
         print(f"\n[{i}/{total}] Transcribing: {file_path}")
         try:
             transcribe_opts = dict(
@@ -368,13 +386,25 @@ def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None):
     print(f"Transcribed: {transcribed}")
     print(f"Errors:      {errors}")
 
-def run_transcribe_file(file_path, model_name="large-v3", use_vad=True, output_dir=None):
+def run_transcribe_file(file_path, model_name="large-v3", use_vad=True, output_dir=None, skip_existing=False):
     """
     MODE 6: FULL FILE TRANSCRIBE
     Transcribes a single media file with the specified model.
     """
     print(f"[STATUS] Transcribing full file: {file_path}")
     print(f"[STATUS] Model: {model_name}")
+
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    safe_model = model_name.replace("/", "_").replace("\\", "_")
+    if output_dir:
+        out_check = os.path.join(output_dir, f"{base_name}_transcript_{safe_model}.txt")
+    else:
+        out_check = f"{os.path.splitext(file_path)[0]}_transcript_{safe_model}.txt"
+
+    if skip_existing and os.path.exists(out_check):
+        print(f"[SKIPPING] Target exists: {out_check}")
+        return
+
     print(f"[STATUS] VAD: {'ON' if use_vad else 'OFF'}")
     print(f"[BATCH] Loading {model_name} model...")
 
@@ -493,6 +523,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="large-v3", help="Whisper model to use (e.g. tiny.en, base.en, small.en, medium.en, large-v3)")
     parser.add_argument("--query", help="Search query for search_transcripts mode")
     parser.add_argument("--output-dir", help="Directory to save transcript files")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip files if transcript already exists")
     args = parser.parse_args()
 
     use_vad = not args.no_vad
@@ -506,20 +537,20 @@ if __name__ == "__main__":
             exit(1)
         run_batch_scanner(directory, use_vad=use_vad, report_path=args.report)
     elif args.mode == "transcribe":
-        run_transcriber(args.file, args.start, args.end, output_dir=args.output_dir)
+        run_transcriber(args.file, args.start, args.end, output_dir=args.output_dir, skip_existing=args.skip_existing)
     elif args.mode == "batch_transcribe":
-        run_batch_transcriber(args.report, output_dir=args.output_dir)
+        run_batch_transcriber(args.report, output_dir=args.output_dir, skip_existing=args.skip_existing)
     elif args.mode == "batch_transcribe_dir":
         directory = args.dir or args.file
         if not directory:
             print("Error: Provide a directory with --dir or as positional argument")
             exit(1)
-        run_batch_transcribe_dir(directory, use_vad=use_vad, output_dir=args.output_dir)
+        run_batch_transcribe_dir(directory, use_vad=use_vad, output_dir=args.output_dir, skip_existing=args.skip_existing)
     elif args.mode == "transcribe_file":
         if not args.file:
             print("Error: Provide a file path")
             exit(1)
-        run_transcribe_file(args.file, model_name=args.model, use_vad=use_vad, output_dir=args.output_dir)
+        run_transcribe_file(args.file, model_name=args.model, use_vad=use_vad, output_dir=args.output_dir, skip_existing=args.skip_existing)
     elif args.mode == "search_transcripts":
         directory = args.dir or "."
         if not args.query:
@@ -584,8 +615,9 @@ def run_server():
                 start = cmd.get("start")
                 end = cmd.get("end")
                 output_dir = cmd.get("output_dir")
+                skip_existing = cmd.get("skip_existing", False)
                 
-                run_transcriber(file_path, start, end, model=current_model, output_dir=output_dir)
+                run_transcriber(file_path, start, end, model=current_model, output_dir=output_dir, skip_existing=skip_existing)
                 print(json.dumps({"status": "complete", "action": "transcribe"}), flush=True) 
 
             elif action == "exit":

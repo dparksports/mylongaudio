@@ -249,15 +249,16 @@ public class PythonRunner : IDisposable
         }
     }
 
-    public async Task RunBatchTranscribeAsync(string? reportPath = null)
+    public async Task RunBatchTranscribeAsync(string? reportPath = null, bool skipExisting = false)
     {
         // Server mode not implemented for this action yet
         var cmdArgs = $"--output-dir \"{TranscriptDirectory}\"";
         if (reportPath != null) cmdArgs += $" --report \"{reportPath}\"";
+        if (skipExisting) cmdArgs += " --skip-existing";
         await RunProcessAsync(BuildArgs("batch_transcribe", cmdArgs));
     }
 
-    public async Task RunBatchTranscribeDirAsync(string directory, bool useVad)
+    public async Task RunBatchTranscribeDirAsync(string directory, bool useVad, bool skipExisting)
     {
         var safeDir = directory.TrimEnd('\\', '/');
         if (safeDir.EndsWith("\\")) safeDir = safeDir.TrimEnd('\\');
@@ -268,6 +269,7 @@ public class PythonRunner : IDisposable
         
         var cmdArgs = $"--dir \"{safeDir}\" --output-dir \"{TranscriptDirectory}\"";
         if (!useVad) cmdArgs += " --no-vad";
+        if (skipExisting) cmdArgs += " --skip-existing";
         await RunProcessAsync(BuildArgs("batch_transcribe_dir", cmdArgs));
     }
 
@@ -291,12 +293,13 @@ public class PythonRunner : IDisposable
         }
     }
 
-    public async Task RunTranscribeFileAsync(string file, string model, bool useVad)
+    public async Task RunTranscribeFileAsync(string file, string model, bool useVad, bool skipExisting)
     {
          // "transcribe_file" mode also not added to server loop yet.
          // Fallback to legacy.
         var cmdArgs = $"\"{file}\" --model {model} --output-dir \"{TranscriptDirectory}\"";
         if (!useVad) cmdArgs += " --no-vad";
+        if (skipExisting) cmdArgs += " --skip-existing";
         await RunProcessAsync(BuildArgs("transcribe_file", cmdArgs));
     }
 
