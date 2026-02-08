@@ -1,7 +1,7 @@
 <Window x:Class="LongAudioApp.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Long Audio Voice Scanner" Height="700" Width="1000"
+        Title="TurboScribe Private" Height="700" Width="1000"
         Background="{StaticResource BgBrush}"
         WindowStartupLocation="CenterScreen">
 
@@ -14,7 +14,7 @@
 
         <!-- Header -->
         <StackPanel Grid.Row="0" Margin="0,0,0,12">
-            <TextBlock Text="🎙️ Long Audio Voice Scanner" FontSize="22" FontWeight="Bold" 
+            <TextBlock Text="🎙️ TurboScribe Private" FontSize="22" FontWeight="Bold" 
                        Foreground="{StaticResource TextBrush}"/>
             <TextBlock Text="Scan media files for voice activity, then transcribe with Whisper Large-v3"
                        Foreground="{StaticResource TextDimBrush}" FontSize="12" Margin="0,4,0,0"/>
