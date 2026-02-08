@@ -469,14 +469,42 @@ public partial class MainWindow : Window
         }
 
         _isScanRunning = true;
-        ScanProgress.Value = 0;
-        ScanStatusLabel.Text = "Starting scan...";
-        StatusBar.Text = "Starting voice scan...";
-        ClearLog();
+        // UI Updates
+        ScanBtn.Content = "🛑 Stop Scan";
+        ScanStatusLabel.Text = "Loading AI models (this may take a moment)...";
+        StatusBar.Text = "Starting scan...";
+        
+        ScanProgress.IsIndeterminate = true;
+        
+        // Clear previous results
+        _report = new ScanReport();
+        ResultsGrid.ItemsSource = null;
 
-        bool useVad = !(NoVadCheck.IsChecked ?? false);
-        AnalyticsService.TrackEvent("scan_start", new { use_vad = useVad });
-        await _runner.RunBatchScanAsync(dir, useVad, _reportPath);
+        try
+        {
+            ClearLog();
+
+            bool useVad = !(NoVadCheck.IsChecked ?? false);
+            AnalyticsService.TrackEvent("scan_start", new { use_vad = useVad });
+            await _runner.RunBatchScanAsync(dir, useVad, _reportPath);
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("[INFO] Scan cancelled by user.");
+            StatusBar.Text = "Scan cancelled.";
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[ERROR] Scan failed: {ex.Message}");
+            MessageBox.Show($"Scan failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusBar.Text = "Scan failed.";
+        }
+        finally
+        {
+            _isScanRunning = false;
+            ScanBtn.Content = "🔍 Scan for Voice";
+            ScanProgress.IsIndeterminate = false;
+        }
     }
 
     private async void BatchTranscribeBtn_Click(object sender, RoutedEventArgs e)
