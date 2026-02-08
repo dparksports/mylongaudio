@@ -10,7 +10,7 @@
 
 A private, offline transcription tool powered by `faster-whisper`. Run unlimited scans and transcriptions locally on your machine.
 
-[![Download v1.3.3](https://img.shields.io/badge/Download-v1.3.3-blue?style=for-the-badge&logo=windows)](https://github.com/dparksports/turboscribe/releases/download/v1.3.3/TurboScribePrivate-v1.3.3-win-x64.zip)** (Requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
+[![Download v1.3.4](https://img.shields.io/badge/Download-v1.3.4-blue?style=for-the-badge&logo=windows)](https://github.com/dparksports/turboscribe/releases/download/v1.3.4/TurboScribePrivate-v1.3.4-win-x64.zip)** (Requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
 
 ## 🔒 Why TurboScribe Private?
 

@@ -336,6 +336,20 @@
                         </StackPanel>
                     </GroupBox>
 
+                    <!-- ENGINE PROCESS MANAGEMENT -->
+                    <GroupBox Header="Engine Process" BorderBrush="{StaticResource BorderBrush}" 
+                              Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,16" Padding="12">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="Status: " Foreground="{StaticResource TextDimBrush}"/>
+                                <TextBlock x:Name="EngineStatusLabel" Text="Idle" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
+                            </StackPanel>
+                            <Button Content="💀 Force Kill Background Processes" Width="220" HorizontalAlignment="Left"
+                                    Style="{StaticResource AccentButton}" Click="KillEngineBtn_Click"
+                                    ToolTip="Forcefully terminate any stuck fast_engine.exe processes"/>
+                        </StackPanel>
+                    </GroupBox>
+
                     <!-- PRIVACY SETTINGS -->
                     <GroupBox Header="Privacy" BorderBrush="{StaticResource BorderBrush}" 
                               Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,16" Padding="12">

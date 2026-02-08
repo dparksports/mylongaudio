@@ -108,11 +108,72 @@ public partial class MainWindow : Window
         UpdateGpuTimer();
         _gpuTimer.Tick += (s, args) => DetectGpu();
         if (_appSettings.GpuRefreshIntervalSeconds > 0) _gpuTimer.Start();
+
+        // Start Engine Zombie process check
+        StartZombieCheckTimer();
     }
 
     private DispatcherTimer _gpuTimer;
+    private DispatcherTimer _engineCheckTimer; // Check for zombies/status
     private AppSettings _appSettings = new();
     private readonly string _settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_settings.json");
+
+    private void StartZombieCheckTimer()
+    {
+        _engineCheckTimer = new DispatcherTimer();
+        _engineCheckTimer.Interval = TimeSpan.FromSeconds(5);
+        _engineCheckTimer.Tick += (s, e) => CheckEngineStatus();
+        _engineCheckTimer.Start();
+        CheckEngineStatus(); // Initial check
+    }
+
+    private void CheckEngineStatus()
+    {
+        try
+        {
+            var processes = Process.GetProcessesByName("fast_engine");
+            var count = processes.Length;
+            // Also check for python with fast_engine.py argument if using script
+            if (count == 0)
+            {
+               // This is harder to detect reliably without WMI, but fast_engine.exe is our main target
+            }
+
+            if (count > 0)
+            {
+                EngineStatusLabel.Text = $"Running ({count} background processes)";
+                EngineStatusLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171")); // Red
+            }
+            else
+            {
+                EngineStatusLabel.Text = "Idle";
+                EngineStatusLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#4ADE80")); // Green
+            }
+        }
+        catch { }
+    }
+
+    private void KillEngineBtn_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var count = 0;
+            foreach (var proc in Process.GetProcessesByName("fast_engine"))
+            {
+                proc.Kill();
+                count++;
+            }
+            // Also try to kill the python process if running from script (risky if other python apps run, but safe-ish for bundled env)
+            // For now, only targeting fast_engine.exe as that's the bundled name.
+            
+            MessageBox.Show($"Terminated {count} background processes.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            CheckEngineStatus();
+        }
+        catch (Exception ex)
+        {
+             MessageBox.Show($"Failed to kill processes: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
 
     private void LoadAppSettings()
     {
