@@ -1,7 +1,8 @@
 # 🎙️ TurboScribe Private
 
-**GPU-accelerated batch voice scanner & transcription tool** for large media libraries.  
-Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) with GPU support for fast, accurate transcription.
+**Transcribe your meetings and notes locally, privately, and 10x faster than online services.**
+
+**TurboScribe Private** is a GPU-accelerated desktop tool designed for professionals who need to transcribe sensitive audio — **meetings, interviews, voice memos, and lectures** — without uploading data to the cloud.
 
 ![TurboScribe Private Screenshot](screenshot.png)
 
@@ -9,19 +10,21 @@ Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) w
 
 **[⬇️ Download v1.3.1 (TurboScribe Private)](https://github.com/dparksports/mylongaudio/releases/download/v1.3.1/TurboScribePrivate-v1.3.1-win-x64.zip)** (Requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
 
+## 🔒 Why TurboScribe Private?
+
+- **100% Private & Offline**: Your audio files *never* leave your computer. Perfect for confidential meetings, legal interviews, and private voice notes.
+- **10x Faster Generation**: Built on `faster-whisper` (CTranslate2) with CUDA acceleration to transcribe hours of audio in minutes.
+- **Batch Processing**: Point it at a folder of 1,000 meeting recordings and let it run.
+- **Smart Voice Detection**: Automatically scans directories to find files containing human speech, ignoring silence and music.
+- **Search & Archive**: Instantly search through thousands of generated transcripts to find exactly what was said.
+
 ## ✨ Features
 
-- **Voice Detection Scan** — Quickly scan directories for media files containing voice/speech using `silero-vad`
-- **Batch Transcribe** — Transcribe all detected voice segments or entire directories with one click
-- **Live Progress** — Real-time updates as each file is processed; view completed transcripts immediately
-- **Model Selection** — Choose Whisper model size (`tiny.en` → `large-v3`) for speed vs accuracy tradeoff
-- **Multi-Version Transcripts** — Re-transcribe files with different models; each version saved as `_transcript_{model}.txt`
-- **Compare Versions** — Color-coded diff view to compare transcript versions side by side (🔴 red / 🟢 green highlighting)
-- **Transcript Search** — Search across all transcripts by keyword with relevance scoring
-- **Dark Theme WPF UI** — Modern Windows desktop app with tabbed interface
-- **GA4 Analytics** — Session-aware telemetry with persistent client_id
-- **Silent File Tracking** — Detects and lists metadata-only/silent files (viewable list)
-- **Explorer Integration** — Right-click transcripts to Open File or Open Folder
+- **Transcribe Meetings & Notes** — Optimized for long-form speech audio.
+- **Compare Versions** — Re-transcribe important segments with larger models (e.g., `large-v3`) and view differences.
+- **Silent File Tracking** — Detects and lists metadata-only/silent files to clean up your archive.
+- **Modern UI** — Dark mode, tabbed interface, and Windows Explorer integration.
+- **GA4 Analytics** — Minimal, privacy-aware telemetry (session-based only).
 
 ## 🛠️ Tech Stack
 
