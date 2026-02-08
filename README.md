@@ -3,6 +3,8 @@
 **GPU-accelerated batch voice scanner & transcription tool** for large media libraries.  
 Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) with GPU support for fast, accurate transcription.
 
+![Long Audio Transcriber Screenshot](screenshot.png)
+
 ## 📥 Download
 
 **[⬇️ Download v1.3.0](https://github.com/dparksports/mylongaudio/releases/download/v1.3.0/LongAudioApp-v1.3.0-win-x64.zip)** (Requires [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0))
