@@ -110,10 +110,15 @@ public class PipInstaller
             failures++;
 
         // Install llama-cpp-python with CUDA support for GPU inference
-        // Default PyPI wheel is CPU-only on Windows; use the pre-built CUDA wheel
+        // Use --only-binary to prevent building from source (requires Visual Studio C++ tools)
+        // Try CUDA pre-built wheel first, fall back to CPU-only from PyPI
         onOutput("Installing llama-cpp-python with CUDA support...");
-        if (!await TryRunCommandAsync("-m pip install llama-cpp-python --upgrade --no-warn-script-location --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126", onOutput))
-            failures++;
+        if (!await TryRunCommandAsync("-m pip install llama-cpp-python --upgrade --no-warn-script-location --only-binary :all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126", onOutput))
+        {
+            onOutput("CUDA wheel not available, trying CPU-only wheel...");
+            if (!await TryRunCommandAsync("-m pip install llama-cpp-python --upgrade --no-warn-script-location --only-binary :all:", onOutput))
+                failures++;
+        }
 
         // Install huggingface-hub for model downloading
         onOutput("Installing huggingface-hub...");

@@ -187,7 +187,8 @@ public partial class MainWindow : Window
     private DispatcherTimer _gpuTimer;
     private DispatcherTimer? _engineCheckTimer; // Check for zombies/status
     private AppSettings _appSettings = new();
-    private readonly string _settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_settings.json");
+    private readonly string _settingsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LongAudioApp", "app_settings.json");
 
     private void StartZombieCheckTimer()
     {
@@ -769,7 +770,13 @@ public partial class MainWindow : Window
     }
 
     private void TranscriptSortCombo_Changed(object sender, SelectionChangedEventArgs e) => ApplyTranscriptView();
-    private void TranscriptFilterBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyTranscriptView();
+    private void TranscriptFilterBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        ApplyTranscriptView();
+        if (FilterPlaceholder != null)
+            FilterPlaceholder.Visibility = string.IsNullOrEmpty(TranscriptFilterBox.Text) 
+                ? Visibility.Visible : Visibility.Collapsed;
+    }
     private void AnalysisSortCombo_Changed(object sender, SelectionChangedEventArgs e) => ApplyTranscriptView();
     private void AnalysisFilterBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyTranscriptView();
 
@@ -923,6 +930,13 @@ public partial class MainWindow : Window
 
         bool useVad = !(NoVadCheck.IsChecked ?? false);
         await _runner.RunTranscribeFileAsync(mediaPath, model, useVad, skipExisting: false);
+    }
+
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (SearchPlaceholder != null)
+            SearchPlaceholder.Visibility = string.IsNullOrEmpty(SearchBox.Text) 
+                ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SearchBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -1168,7 +1182,7 @@ public partial class MainWindow : Window
             }
         };
 
-        var openInPlayer = new MenuItem { Header = "▶ Open in Media Player" };
+        var openInPlayer = new MenuItem { Header = "▶ Open Media File in Player" };
         openInPlayer.Click += (s, e) =>
         {
             if (TranscriptList.SelectedItem is TranscriptFileInfo info)
@@ -1186,7 +1200,7 @@ public partial class MainWindow : Window
             }
         };
 
-        var revealInExplorer = new MenuItem { Header = "📂 Reveal in Explorer" };
+        var revealInExplorer = new MenuItem { Header = "📂 Reveal Media File in Explorer" };
         revealInExplorer.Click += (s, e) =>
         {
             if (TranscriptList.SelectedItem is TranscriptFileInfo info)
