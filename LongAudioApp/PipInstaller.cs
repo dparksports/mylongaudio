@@ -88,57 +88,58 @@ public class PipInstaller
         await RunCommandAsync($"\"{tempFile}\" --no-warn-script-location", onOutput);
     }
 
-    public async Task InstallLibrariesAsync(Action<string> onOutput)
+    public async Task<List<string>> InstallLibrariesAsync(Action<string> onOutput)
     {
-        int failures = 0;
+        var failed = new List<string>();
 
         // Install torch with CUDA 12.6 support (cu126).
         // cu126 supports RTX 3090, 4090, and 5090 (Blackwell) with good wheel availability.
         // Without the --index-url, pip installs CPU-only torch on Windows.
         onOutput("Installing PyTorch with CUDA 12.6 (cu126) support...");
         if (!await TryRunCommandAsync("-m pip install torch torchaudio --upgrade --no-warn-script-location --index-url https://download.pytorch.org/whl/cu126", onOutput))
-            failures++;
+            failed.Add("torch (CUDA)");
         
         // Install faster-whisper separately (from default PyPI)
         onOutput("Installing faster-whisper...");
         if (!await TryRunCommandAsync("-m pip install faster-whisper --upgrade --no-warn-script-location --prefer-binary", onOutput))
-            failures++;
+            failed.Add("faster-whisper");
 
         // Install sentence-transformers for semantic search
         onOutput("Installing sentence-transformers for semantic search...");
         if (!await TryRunCommandAsync("-m pip install sentence-transformers --upgrade --no-warn-script-location --prefer-binary", onOutput))
-            failures++;
+            failed.Add("sentence-transformers");
 
         // Install llama-cpp-python with CUDA support for GPU inference
-        // Use --only-binary to prevent building from source (requires Visual Studio C++ tools)
-        // Try CUDA pre-built wheel first, fall back to CPU-only from PyPI
+        // Try CUDA pre-built wheel first, then allow source build from PyPI
         onOutput("Installing llama-cpp-python with CUDA support...");
-        if (!await TryRunCommandAsync("-m pip install llama-cpp-python --upgrade --no-warn-script-location --only-binary :all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126", onOutput))
+        if (!await TryRunCommandAsync("-m pip install llama-cpp-python --upgrade --no-warn-script-location --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu126", onOutput))
         {
-            onOutput("CUDA wheel not available, trying CPU-only wheel...");
-            if (!await TryRunCommandAsync("-m pip install llama-cpp-python --upgrade --no-warn-script-location --only-binary :all:", onOutput))
-                failures++;
+            onOutput("CUDA wheel not available, trying default install...");
+            if (!await TryRunCommandAsync("-m pip install llama-cpp-python --upgrade --no-warn-script-location --prefer-binary", onOutput))
+                failed.Add("llama-cpp-python (needs Visual Studio Build Tools)");
         }
 
         // Install huggingface-hub for model downloading
         onOutput("Installing huggingface-hub...");
         if (!await TryRunCommandAsync("-m pip install huggingface-hub --upgrade --no-warn-script-location --prefer-binary", onOutput))
-            failures++;
+            failed.Add("huggingface-hub");
 
         // Install openai SDK (used for OpenAI and Gemini APIs)
         onOutput("Installing openai SDK...");
         if (!await TryRunCommandAsync("-m pip install openai --upgrade --no-warn-script-location --prefer-binary", onOutput))
-            failures++;
+            failed.Add("openai");
 
         // Install anthropic SDK (for Claude API)
         onOutput("Installing anthropic SDK...");
         if (!await TryRunCommandAsync("-m pip install anthropic --upgrade --no-warn-script-location --prefer-binary", onOutput))
-            failures++;
+            failed.Add("anthropic");
 
-        if (failures > 0)
-            onOutput($"\nDone with {failures} warning(s). Some packages may have failed — check the log above.");
+        if (failed.Count > 0)
+            onOutput($"\nDone with {failed.Count} error(s): {string.Join(", ", failed)}");
         else
             onOutput("\nAll libraries installed successfully.");
+
+        return failed;
     }
 
     private async Task RunCommandAsync(string args, Action<string> onOutput)

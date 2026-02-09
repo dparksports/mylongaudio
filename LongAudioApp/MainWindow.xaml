@@ -285,6 +285,7 @@
 
             <!-- ===== SETTINGS TAB ===== -->
             <TabItem Header="⚙ Settings">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0">
                 <StackPanel Margin="24,20">
                     <TextBlock Text="Application Settings" FontSize="18" FontWeight="SemiBold" 
                                Foreground="{StaticResource TextBrush}" Margin="0,0,0,16"/>
@@ -372,12 +373,26 @@
                                        Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
                             
                             <Button x:Name="InstallLibsBtn" Content="📥 Install AI Libraries" Width="180" HorizontalAlignment="Left"
-                                    Style="{StaticResource AccentButton}" Click="InstallLibsBtn_Click" Margin="0,0,0,12"/>
+                                    Style="{StaticResource AccentButton}" Click="InstallLibsBtn_Click" Margin="0,0,0,8"/>
+                            
+                            <!-- Error summary (hidden until install runs) -->
+                            <TextBlock x:Name="InstallErrorSummary" Foreground="#FF6666" FontSize="11" 
+                                       TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"/>
 
-                            <TextBox x:Name="InstallLogBox" Height="100" Background="#0F172A" Foreground="#94A3B8" 
-                                     FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="11"
-                                     IsReadOnly="True" VerticalScrollBarVisibility="Auto" 
-                                     TextWrapping="Wrap" Padding="8" BorderThickness="0"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="InstallLogBox" Grid.Column="0" Height="100" Background="#0F172A" Foreground="#94A3B8" 
+                                         FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="11"
+                                         IsReadOnly="True" VerticalScrollBarVisibility="Auto" 
+                                         TextWrapping="Wrap" Padding="8" BorderThickness="0"/>
+                                <Button x:Name="PopOpenLogBtn" Grid.Column="1" Content="⬜" Width="28" 
+                                        VerticalAlignment="Top" Margin="4,0,0,0"
+                                        Style="{StaticResource AccentButton}" Click="PopOpenLogBtn_Click"
+                                        ToolTip="Open log in a separate window" FontSize="12" Padding="4"/>
+                            </Grid>
                         </StackPanel>
                     </GroupBox>
 
@@ -408,6 +423,7 @@
                         </StackPanel>
                     </GroupBox>
                 </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
             <!-- ===== LOG TAB ===== -->

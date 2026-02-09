@@ -20,6 +20,9 @@ public class TranscriptFileInfo
     public long CharCount { get; set; }
     public string SizeLabel => CharCount > 0 ? $"{CharCount:N0} chars" : "empty";
 
+    /// <summary>The user's scanned media directory — set from DirectoryBox.Text so transcripts can find media files.</summary>
+    public static string? MediaDirectory { get; set; }
+
     /// <summary>Derive the source media file from the transcript filename or embedded Source: header.</summary>
     public string? SourceMediaPath
     {
@@ -41,18 +44,34 @@ public class TranscriptFileInfo
             }
             catch { }
 
-            // 2. Fallback: derive from filename in same directory
-            var dir = FolderPath;
+            // 2. Fallback: derive from filename — check same directory first
             var name = Path.GetFileNameWithoutExtension(FullPath);
             var idx = name.IndexOf("_transcript");
             if (idx < 0) return null;
             var baseName = name[..idx];
 
             string[] exts = [".mp4", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm", ".wma", ".m4v", ".3gp", ".ts", ".mpg", ".mpeg"];
+            
+            // Check same directory as transcript
+            var dir = FolderPath;
             foreach (var ext in exts)
             {
                 var candidate = Path.Combine(dir, baseName + ext);
                 if (File.Exists(candidate)) return candidate;
+            }
+
+            // 3. Check the user's scanned media directory (transcripts may be in AppData)
+            if (!string.IsNullOrEmpty(MediaDirectory) && Directory.Exists(MediaDirectory))
+            {
+                foreach (var ext in exts)
+                {
+                    try
+                    {
+                        var matches = Directory.GetFiles(MediaDirectory, baseName + ext, SearchOption.AllDirectories);
+                        if (matches.Length > 0) return matches[0];
+                    }
+                    catch { }
+                }
             }
             return null;
         }
@@ -161,6 +180,9 @@ public partial class MainWindow : Window
     private void OnContentRendered(object? sender, EventArgs e)
     {
         ContentRendered -= OnContentRendered; // One-shot
+
+    // Set the media directory so transcripts can find their source media files
+    TranscriptFileInfo.MediaDirectory = DirectoryBox.Text;
 
         // GPU detection (spawns nvidia-smi subprocess)
         DetectGpu();
@@ -322,12 +344,20 @@ public partial class MainWindow : Window
                 }
                 
                 InstallLogBox.AppendText("Installing libraries into venv...\n");
+                InstallErrorSummary.Visibility = Visibility.Collapsed;
                 
-                await venvInstaller.InstallLibrariesAsync(log => Dispatcher.Invoke(() => 
+                var failures = await venvInstaller.InstallLibrariesAsync(log => Dispatcher.Invoke(() => 
                 {
                     InstallLogBox.AppendText(log + "\n");
                     InstallLogBox.ScrollToEnd();
                 }));
+
+                // Show error summary above the log if any packages failed
+                if (failures.Count > 0)
+                {
+                    InstallErrorSummary.Text = "⚠ Failed packages:\n• " + string.Join("\n• ", failures);
+                    InstallErrorSummary.Visibility = Visibility.Visible;
+                }
 
                 // 3. Restart Engine to pick up new venv
                 if (_runner != null)
@@ -339,7 +369,10 @@ public partial class MainWindow : Window
                     if (_appSettings.StartEngineOnLaunch) _ = _runner.StartServerAsync();
                 }
                 
-                MessageBox.Show("Installation complete! The engine has been updated to use the new environment.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                if (failures.Count > 0)
+                    MessageBox.Show($"Installation completed with {failures.Count} error(s). Check the error summary for details.", "Partial Success", MessageBoxButton.OK, MessageBoxImage.Warning);
+                else
+                    MessageBox.Show("Installation complete! The engine has been updated to use the new environment.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
@@ -355,6 +388,40 @@ public partial class MainWindow : Window
         {
             InstallLibsBtn.IsEnabled = true;
         }
+    }
+
+    private void PopOpenLogBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var logWindow = new Window
+        {
+            Title = "AI Libraries Install Log",
+            Width = 900,
+            Height = 600,
+            Background = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#0F172A")),
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this
+        };
+
+        var textBox = new TextBox
+        {
+            Text = InstallLogBox.Text,
+            IsReadOnly = true,
+            Background = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#0F172A")),
+            Foreground = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#94A3B8")),
+            FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono,Consolas,Courier New"),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(12),
+            BorderThickness = new Thickness(0)
+        };
+
+        logWindow.Content = textBox;
+        logWindow.Show();
     }
 
     private void LoadAppSettings()
@@ -789,6 +856,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
         {
             DirectoryBox.Text = dialog.FolderName;
+            TranscriptFileInfo.MediaDirectory = dialog.FolderName;
         }
     }
 

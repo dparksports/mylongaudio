@@ -197,12 +197,39 @@
             </Setter>
         </Style>
 
-        <!-- Dark CheckBox Style -->
+        <!-- Dark CheckBox Style with visible checkmark -->
         <Style TargetType="CheckBox">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border x:Name="CheckBorder" Width="16" Height="16" 
+                                    Background="#1A1A2A" BorderBrush="{StaticResource BorderBrush}" 
+                                    BorderThickness="1.5" CornerRadius="3" 
+                                    VerticalAlignment="Center" Margin="0,0,6,0">
+                                <TextBlock x:Name="CheckGlyph" Text="✓" FontSize="12" FontWeight="Bold"
+                                           Foreground="#7C3AED" HorizontalAlignment="Center" 
+                                           VerticalAlignment="Center" Margin="0,-2,0,0"
+                                           Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckGlyph" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="CheckBorder" Property="Background" Value="#2A2A3A"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CheckBorder" Property="BorderBrush" Value="#7C3AED"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Application.Resources>
 </Application>
