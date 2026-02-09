@@ -123,14 +123,10 @@ public partial class MainWindow : Window
 
         WireUpRunner();
         SetupTranscriptContextMenu();
-        DetectGpu();
-        TryLoadExistingResults();
 
-    // Settings Init
+        // Settings Init (lightweight — small JSON + UI property sets)
         AppVersionLabel.Text = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "Unknown";
         AnalyticsCheck.IsChecked = AnalyticsService.IsEnabled;
-
-        // Load Settings
         LoadAppSettings();
 
         // Initialize UI from settings
@@ -142,24 +138,12 @@ public partial class MainWindow : Window
                 break;
             }
         }
-
-        // Start GPU monitoring
-        _gpuTimer = new System.Windows.Threading.DispatcherTimer();
-        UpdateGpuTimer();
-        _gpuTimer.Tick += (s, args) => DetectGpu();
-        if (_appSettings.GpuRefreshIntervalSeconds > 0) _gpuTimer.Start();
-
-        // Start Engine Zombie process check
-        StartZombieCheckTimer();
-
-        // Load Settings UI
         GpuRefreshCombo.SelectedValue = _appSettings.GpuRefreshIntervalSeconds.ToString();
         StartEngineCheck.IsChecked = _appSettings.StartEngineOnLaunch;
         SkipExistingCheck.IsChecked = _appSettings.SkipExistingFiles;
         EnglishOnlyCheck.IsChecked = _appSettings.EnglishOnly;
         ApplyEnglishOnlyFilter();
         
-        // Set device preference from settings
         foreach (ComboBoxItem item in DeviceCombo.Items)
         {
             if (item.Tag?.ToString() == _appSettings.DevicePreference)
@@ -169,6 +153,29 @@ public partial class MainWindow : Window
             }
         }
         _runner.DevicePreference = _appSettings.DevicePreference;
+
+        // Defer heavy I/O and subprocess work until after window renders
+        ContentRendered += OnContentRendered;
+    }
+
+    private void OnContentRendered(object? sender, EventArgs e)
+    {
+        ContentRendered -= OnContentRendered; // One-shot
+
+        // GPU detection (spawns nvidia-smi subprocess)
+        DetectGpu();
+
+        // Load existing scan results + refresh transcript lists (disk I/O + directory scans)
+        TryLoadExistingResults();
+
+        // Start GPU monitoring timer
+        _gpuTimer = new System.Windows.Threading.DispatcherTimer();
+        UpdateGpuTimer();
+        _gpuTimer.Tick += (s, args) => DetectGpu();
+        if (_appSettings.GpuRefreshIntervalSeconds > 0) _gpuTimer.Start();
+
+        // Start Engine Zombie process check
+        StartZombieCheckTimer();
 
         // Auto-start engine if enabled
         if (_appSettings.StartEngineOnLaunch)
