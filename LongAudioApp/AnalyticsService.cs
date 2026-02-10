@@ -17,9 +17,15 @@ public static class AnalyticsService
 {
     private static readonly HttpClient _httpClient; 
     private const string Endpoint = "https://www.google-analytics.com/mp/collect";
-    private const string MeasurementId = "G-B387NLSSJX";
-    private const string ApiSecret = "ch411kMtTRW7z_3XEUlmiw";
+    private const string MeasurementId = "G-P3FJP55E0E";
+    private const string ApiSecret = "q_VVWm8GRpGKIxvqxmZr7g";
     private const int SessionTimeoutMinutes = 30;
+
+#if DEBUG
+    private const bool EnableDebugMode = true;
+#else
+    private const bool EnableDebugMode = false;
+#endif
 
     private static string _clientId = "";
     private static string _sessionId = "";
@@ -126,7 +132,9 @@ public static class AnalyticsService
             }
         };
 
-        var url = $"{Endpoint}?measurement_id={MeasurementId}&api_secret={ApiSecret}";
+        var url = EnableDebugMode 
+            ? $"{Endpoint}?measurement_id={MeasurementId}&api_secret={ApiSecret}&debug_mode=1"
+            : $"{Endpoint}?measurement_id={MeasurementId}&api_secret={ApiSecret}";
         var body = JsonSerializer.Serialize(payload);
         await _httpClient.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
 
