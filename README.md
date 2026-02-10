@@ -98,12 +98,27 @@ dotnet run --project LongAudioApp
 
 ## 📝 Recent Updates
 
-### Latest
-- **Voice duration column** — shows speech seconds detected by VAD, sortable
-- **Untranscribed files list** — toggle to show/hide files without transcripts
-- **Model names in filenames** — transcripts now include model name (e.g., `meeting_transcript_turbo.txt`)
-- **Fixed directory handling** — VAD scan now correctly targets selected folders
-- **Delete all transcripts** — new button in Settings to clear all transcript files
+### v2.6.0 (Latest)
+
+**New Features:**
+- **🎙️ Voice Duration Column** — Sortable column showing detected speech duration (e.g., "2.3m", "45s"). Positioned prominently as the 2nd column to help identify active content vs. silent/ambient recordings.
+- **📋 Untranscribed Files List** — Collapsible section below the main list showing files with voice but no transcript yet. Automatically sorted by voice duration (descending) so the most promising files are always at the top.
+- **🏷️ Model Names in Filenames** — Transcripts now include the Whisper model name (e.g., `meeting_transcript_turbo.txt`). This allows side-by-side comparison of different models without overwriting files.
+- **🗑️ Delete All Transcripts** — New button in Settings tab with confirmation dialog and success reporting.
+- **📄 Transcript Length Column** — Shows the character count of the best transcript for each file, enabling sorting by content size.
+
+**Bug Fixes:**
+- **Fixed VAD Scan Targeting** — Resolved an issue where "Scan for Voice" incorrectly targeted the root `C:\` drive. Scans now correctly target selected folders.
+- **Fixed Path Trimming** — Removed contradictory logic that was corrupting drive root paths (e.g., `C:\` being stripped to `C:`).
+- **Fixed Column Sorting** — Corrected a WPF header retrieval bug; clicking headers now properly sorts all columns in the media file list.
+- **Fixed Folder Filtering** — The "Current Folder Only" checkbox now correctly triggers a list refresh instead of occasionally emptying the view.
+- **Fixed Multi-Folder Discovery** — The app now simultaneously scans all checked drives and added custom folders for both media and transcript files.
+
+**UI & Workflow Improvements:**
+- **Split-List Design** — Removed the redundant "Transcribed" column. The UI now naturally splits transcribed (main list) and untranscribed (secondary list) files.
+- **Refined Column Order** — Reordered columns (Filename → Voice → Length → Models) to prioritize the most actionable metadata.
+- **Model Checkmarks** — Individual model columns (large-v3, turbo, etc.) now correctly display checkmarks based on the newly standardized `{file}_transcript_{model}.txt` naming convention.
+- **Dimmed Untranscribed Items** — Uses distinct styling to separate pending work from completed transcripts.
 
 ---
 
