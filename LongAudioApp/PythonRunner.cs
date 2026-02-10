@@ -364,11 +364,57 @@ public class PythonRunner : IDisposable
     public async Task RunAnalyzeAsync(string transcriptFile, string analyzeType, string provider,
         string? model = null, string? apiKey = null, string? cloudModel = null)
     {
+        // Run analysis in its own independent process so it works even while transcription is running
         var cmdArgs = $"\"{transcriptFile}\" --analyze-type {analyzeType} --provider {provider}";
         if (!string.IsNullOrEmpty(model)) cmdArgs += $" --model {model}";
         if (!string.IsNullOrEmpty(apiKey)) cmdArgs += $" --api-key \"{apiKey}\"";
         if (!string.IsNullOrEmpty(cloudModel)) cmdArgs += $" --cloud-model \"{cloudModel}\"";
-        await RunProcessAsync(BuildArgs("analyze", cmdArgs));
+        var arguments = BuildArgs("analyze", cmdArgs);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = _pythonPath,
+            Arguments = arguments,
+            WorkingDirectory = Path.GetDirectoryName(_scriptPath),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8
+        };
+        psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+        var pyDir = Path.GetDirectoryName(_pythonPath);
+        if (!string.IsNullOrEmpty(pyDir))
+        {
+            var envPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            psi.EnvironmentVariables["PATH"] = pyDir + ";" + envPath;
+        }
+
+        using var proc = new Process { StartInfo = psi };
+        proc.Start();
+
+        var stdoutTask = Task.Run(async () =>
+        {
+            while (true)
+            {
+                var line = await proc.StandardOutput.ReadLineAsync();
+                if (line == null) break;
+                OutputReceived?.Invoke(line);
+            }
+        });
+        var stderrTask = Task.Run(async () =>
+        {
+            while (true)
+            {
+                var line = await proc.StandardError.ReadLineAsync();
+                if (line == null) break;
+                OutputReceived?.Invoke(line);
+            }
+        });
+
+        await Task.WhenAll(stdoutTask, stderrTask);
+        await proc.WaitForExitAsync();
     }
 
     public void Cancel()

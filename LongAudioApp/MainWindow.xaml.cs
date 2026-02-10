@@ -1956,8 +1956,8 @@ public partial class MainWindow : Window
             }
         }
 
-        // Switch to Analysis tab to show progress
-        MainTabControl.SelectedIndex = 4;
+        // Stay on Analysis tab to show progress
+        MainTabControl.SelectedIndex = 1;
 
         // Select the file in the Analysis transcript list
         var items = AnalysisTranscriptList.ItemsSource as IEnumerable<AnalysisFileInfo>;

@@ -7,7 +7,7 @@
 
     <!-- Custom window chrome for borderless/rounded look -->
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="36" CornerRadius="12" GlassFrameThickness="0"
+        <WindowChrome CaptionHeight="36" CornerRadius="12" GlassFrameThickness="-1"
                       ResizeBorderThickness="6" UseAeroCaptionButtons="True"/>
     </WindowChrome.WindowChrome>
 
