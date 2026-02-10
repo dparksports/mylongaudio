@@ -447,6 +447,63 @@ public class PythonRunner : IDisposable
         await proc.WaitForExitAsync();
     }
 
+    public async Task RunExtractTimestampsAsync(string filePath, int numFrames = 5)
+    {
+        // timestamp_engine.py lives next to fast_engine.py
+        var tsScriptPath = Path.Combine(Path.GetDirectoryName(_scriptPath)!, "timestamp_engine.py");
+
+        // Prefer dedicated timestamp venv python over the main whisper venv
+        var tsVenvPython = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "timestamp_venv", "Scripts", "python.exe");
+        var pythonToUse = File.Exists(tsVenvPython) ? tsVenvPython : _pythonPath;
+
+        var arguments = $"\"{tsScriptPath}\" \"{filePath}\" --num-frames {numFrames}";
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = pythonToUse,
+            Arguments = arguments,
+            WorkingDirectory = Path.GetDirectoryName(_scriptPath),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8
+        };
+        psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+        var pyDir = Path.GetDirectoryName(pythonToUse);
+        if (!string.IsNullOrEmpty(pyDir))
+        {
+            var envPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            psi.EnvironmentVariables["PATH"] = pyDir + ";" + envPath;
+        }
+
+        using var proc = new Process { StartInfo = psi };
+        proc.Start();
+
+        var stdoutTask = Task.Run(async () =>
+        {
+            while (true)
+            {
+                var line = await proc.StandardOutput.ReadLineAsync();
+                if (line == null) break;
+                OutputReceived?.Invoke(line);
+            }
+        });
+        var stderrTask = Task.Run(async () =>
+        {
+            while (true)
+            {
+                var line = await proc.StandardError.ReadLineAsync();
+                if (line == null) break;
+                OutputReceived?.Invoke(line);
+            }
+        });
+
+        await Task.WhenAll(stdoutTask, stderrTask);
+        await proc.WaitForExitAsync();
+    }
+
     public void Cancel()
     {
         _cts?.Cancel();

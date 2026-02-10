@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="..\fast_engine.py" CopyToOutputDirectory="PreserveNewest" Link="fast_engine.py" />
+    <None Include="..\timestamp_engine.py" CopyToOutputDirectory="PreserveNewest" Link="timestamp_engine.py" />
 
   </ItemGroup>
 </Project>

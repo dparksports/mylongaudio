@@ -173,7 +173,7 @@ public class PipInstaller
     }
 
     /// <summary>Runs a pip command, returns true on success, false on failure (logs warning instead of throwing).</summary>
-    private async Task<bool> TryRunCommandAsync(string args, Action<string> onOutput)
+    public async Task<bool> TryRunCommandAsync(string args, Action<string> onOutput)
     {
         var psi = new ProcessStartInfo
         {

@@ -144,6 +144,7 @@ public partial class MainWindow : Window
     private bool _isSyncingTranscript;   // true while timer updates transcript selection (prevents feedback loop)
     private bool _isPlayerPlaying;
     private List<TranscriptLine> _currentTranscriptLines = new();
+    private bool _isLoadingMediaFile;  // prevents ModelSelector_SelectionChanged from firing during file load
     private bool _gpuHardwareAvailable;
     private bool _cudaPytorchReady;
 
@@ -326,6 +327,8 @@ public partial class MainWindow : Window
         {
             _ = _runner.StartServerAsync();
         }
+
+        // Check timestamp venv status is now done via button, not on startup
     }
 
     private DispatcherTimer _gpuTimer;
@@ -1366,6 +1369,8 @@ public partial class MainWindow : Window
     {
         if (MediaFileList.SelectedItem is MediaFileInfo mf)
         {
+            _isLoadingMediaFile = true;
+
             // Load best transcript if available
             if (mf.BestTranscriptPath != null && File.Exists(mf.BestTranscriptPath))
             {
@@ -1391,7 +1396,15 @@ public partial class MainWindow : Window
                     CompareBtn.IsEnabled = versions.Count > 1;
                     CompareBtn.Visibility = versions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
 
-                    DetectTranscriptVersions(info);
+                    // Auto-select the model in ModelSelector matching this transcript
+                    AutoSelectModelForTranscript(mf.BestTranscriptPath);
+
+                    // Hide old VersionCombo — ModelSelector handles version switching now
+                    VersionCombo.Visibility = Visibility.Collapsed;
+                    InlineVersionLabel.Text = mf.TranscriptModels.Count > 1
+                        ? $"{mf.TranscriptModels.Count} versions"
+                        : "";
+
                     LoadMediaForTranscript(mf.FullPath);
 
                     StatusBar.Text = $"Viewing: {mf.FileName}" +
@@ -1421,6 +1434,124 @@ public partial class MainWindow : Window
                 InlineVersionLabel.Text = "";
                 LoadMediaForTranscript(mf.FullPath);
                 StatusBar.Text = $"Selected: {mf.FileName} (no transcript)";
+            }
+
+            _isLoadingMediaFile = false;
+        }
+    }
+
+    /// <summary>Auto-select the model in ModelSelector that matches the loaded transcript path.</summary>
+    private void AutoSelectModelForTranscript(string transcriptPath)
+    {
+        var tfName = Path.GetFileNameWithoutExtension(transcriptPath);
+        var idx = tfName.IndexOf("_transcript", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return;
+
+        var modelPart = tfName[(idx + "_transcript".Length)..].TrimStart('_');
+        if (string.IsNullOrEmpty(modelPart)) return;
+
+        // Find matching ComboBoxItem in ModelSelector
+        foreach (ComboBoxItem item in ModelSelector.Items)
+        {
+            var tag = item.Tag?.ToString() ?? "";
+            if (tag.Equals(modelPart, StringComparison.OrdinalIgnoreCase))
+            {
+                ModelSelector.SelectedItem = item;
+                break;
+            }
+        }
+    }
+
+    /// <summary>Find the transcript file path for a given media file and model name.</summary>
+    private string? GetTranscriptPathForModel(string mediaPath, string modelName)
+    {
+        var mediaBaseName = Path.GetFileNameWithoutExtension(mediaPath);
+        var expectedName = $"{mediaBaseName}_transcript_{modelName}.txt";
+
+        // Check transcript directory first
+        var transcriptDir = _runner.TranscriptDirectory;
+        if (Directory.Exists(transcriptDir))
+        {
+            var path = Path.Combine(transcriptDir, expectedName);
+            if (File.Exists(path)) return path;
+        }
+
+        // Check same directory as media file
+        var mediaDir = Path.GetDirectoryName(mediaPath);
+        if (!string.IsNullOrEmpty(mediaDir))
+        {
+            var path = Path.Combine(mediaDir, expectedName);
+            if (File.Exists(path)) return path;
+        }
+
+        return null;
+    }
+
+    /// <summary>When user changes model, load matching transcript version or auto-retranscribe.</summary>
+    private async void ModelSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isLoadingMediaFile) return; // Don't fire during file selection
+        if (MediaFileList.SelectedItem is not MediaFileInfo mf) return;
+
+        var model = (ModelSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        if (string.IsNullOrEmpty(model)) return;
+
+        var transcriptPath = GetTranscriptPathForModel(mf.FullPath, model);
+
+        if (transcriptPath != null)
+        {
+            // Transcript exists for this model — load it
+            try
+            {
+                _selectedTranscriptPath = transcriptPath;
+                var content = File.ReadAllText(transcriptPath);
+                LoadTranscriptLines(content);
+                StatusBar.Text = $"Viewing: {mf.FileName} ({model})";
+            }
+            catch (Exception ex)
+            {
+                TranscriptLineList.ItemsSource = null;
+                StatusBar.Text = $"Error reading transcript: {ex.Message}";
+            }
+        }
+        else
+        {
+            // No transcript for this model — auto-retranscribe
+            if (!File.Exists(mf.FullPath))
+            {
+                MessageBox.Show("Could not find the source media file.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            try
+            {
+                TranscribeStatusLabel.Text = $"Transcribing with {model}...";
+                StatusBar.Text = $"Transcribing {mf.FileName} with {model}...";
+
+                bool useVad = !(NoVadCheck.IsChecked ?? false);
+                await _runner.RunTranscribeFileAsync(mf.FullPath, model, useVad, skipExisting: false);
+
+                // After transcription completes, try loading the new transcript
+                var newPath = GetTranscriptPathForModel(mf.FullPath, model);
+                if (newPath != null)
+                {
+                    try
+                    {
+                        _selectedTranscriptPath = newPath;
+                        var content = File.ReadAllText(newPath);
+                        LoadTranscriptLines(content);
+                        StatusBar.Text = $"Viewing: {mf.FileName} ({model})";
+
+                        // Refresh the file list to update model badges
+                        RefreshMediaFileList();
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusBar.Text = $"No {model} transcript — {ex.Message}";
+                TranscribeStatusLabel.Text = "Use Re-transcribe when ready";
             }
         }
     }
@@ -2796,6 +2927,412 @@ public partial class MainWindow : Window
             if (first != null) ModelSelector.SelectedItem = first;
         }
     }
+
+    // ===== TIMESTAMPS TAB =====
+
+    private const string TIMESTAMP_VENV_NAME = "timestamp_venv";
+    private string? _selectedTimestampVideoPath;
+    private CancellationTokenSource? _timestampCts;
+
+    private async void CheckTimestampStatusBtn_Click(object sender, RoutedEventArgs e)
+    {
+        CheckTimestampStatusBtn.IsEnabled = false;
+        CheckTimestampStatusBtn.Content = "⏳ Checking...";
+        TimestampLogConsole.Text = "";
+        await CheckTimestampVenvStatusAsync();
+        CheckTimestampStatusBtn.IsEnabled = true;
+        CheckTimestampStatusBtn.Content = "🔄 Check Status";
+    }
+
+    private async Task CheckTimestampVenvStatusAsync()
+    {
+        var appDir = AppDomain.CurrentDomain.BaseDirectory;
+        var venvPython = Path.Combine(appDir, TIMESTAMP_VENV_NAME, "Scripts", "python.exe");
+        var tsScript = Path.Combine(_scriptDir, "timestamp_engine.py");
+
+        Action<string> log = msg => Dispatcher.Invoke(() =>
+        {
+            TimestampLogConsole.AppendText(msg + "\n");
+            TimestampLogConsole.ScrollToEnd();
+        });
+
+        int passed = 0;
+        int total = 4;
+
+        // 1. Check venv exists
+        log("── Checking timestamp_venv ──");
+        if (File.Exists(venvPython))
+        {
+            log($"✅ Venv python found: {venvPython}");
+            passed++;
+        }
+        else
+        {
+            log($"❌ Venv python NOT found: {venvPython}");
+            log("   → Click 'Install VLM Dependencies' to create it.");
+            TimestampVenvStatus.Text = "⚠ Not installed";
+            TimestampVenvStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FF8866"));
+            return;
+        }
+
+        // 2. Check timestamp_engine.py exists
+        log("\n── Checking timestamp_engine.py ──");
+        if (File.Exists(tsScript))
+        {
+            log($"✅ Script found: {tsScript}");
+            passed++;
+        }
+        else
+        {
+            log($"❌ Script NOT found: {tsScript}");
+        }
+
+        // 3. Check ffmpeg accessible
+        log("\n── Checking ffmpeg ──");
+        try
+        {
+            var ffmpegCheck = new ProcessStartInfo
+            {
+                FileName = venvPython,
+                Arguments = "-c \"import shutil; p = shutil.which('ffmpeg'); print('FFMPEG_PATH=' + (p or 'NONE')); p2 = shutil.which('ffprobe'); print('FFPROBE_PATH=' + (p2 or 'NONE'))\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+            };
+            // Ensure system PATH is available
+            var pyDir = Path.GetDirectoryName(venvPython);
+            if (!string.IsNullOrEmpty(pyDir))
+            {
+                var envPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+                ffmpegCheck.EnvironmentVariables["PATH"] = pyDir + ";" + envPath;
+            }
+
+            using var proc = Process.Start(ffmpegCheck);
+            if (proc != null)
+            {
+                var output = await proc.StandardOutput.ReadToEndAsync();
+                await proc.WaitForExitAsync();
+
+                bool ffmpegOk = output.Contains("FFMPEG_PATH=") && !output.Contains("FFMPEG_PATH=NONE");
+                bool ffprobeOk = output.Contains("FFPROBE_PATH=") && !output.Contains("FFPROBE_PATH=NONE");
+
+                if (ffmpegOk && ffprobeOk)
+                {
+                    log("✅ ffmpeg and ffprobe found on PATH");
+                    foreach (var line in output.Trim().Split('\n'))
+                        log($"   {line.Trim()}");
+                    passed++;
+                }
+                else
+                {
+                    if (!ffmpegOk) log("❌ ffmpeg NOT found on PATH");
+                    if (!ffprobeOk) log("❌ ffprobe NOT found on PATH");
+                    log("   → Install ffmpeg: winget install ffmpeg");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log($"❌ ffmpeg check failed: {ex.Message}");
+        }
+
+        // 4. Check Python imports
+        log("\n── Checking VLM imports ──");
+        try
+        {
+            var importCheck = new ProcessStartInfo
+            {
+                FileName = venvPython,
+                Arguments = "-c \"import torch; print('torch=' + torch.__version__); print('cuda=' + str(torch.cuda.is_available())); from transformers import Qwen2_5_VLForConditionalGeneration; print('transformers=OK'); from PIL import Image; print('pillow=OK'); from qwen_vl_utils import process_vision_info; print('qwen_vl_utils=OK')\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
+            };
+            importCheck.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+
+            using var proc = Process.Start(importCheck);
+            if (proc != null)
+            {
+                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var stdout = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+                var stderr = await proc.StandardError.ReadToEndAsync(cts.Token);
+                try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException)
+                {
+                    log("⏰ Import check timed out after 30s — imports may be slow but could still work.");
+                    try { proc.Kill(); } catch { }
+                }
+
+                if (proc.ExitCode == 0)
+                {
+                    log("✅ All VLM packages importable:");
+                    foreach (var line in stdout.Trim().Split('\n'))
+                        log($"   {line.Trim()}");
+                    passed++;
+                }
+                else
+                {
+                    log("❌ Import check failed:");
+                    foreach (var line in stderr.Trim().Split('\n'))
+                        log($"   {line.Trim()}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log($"❌ Import check failed: {ex.Message}");
+        }
+
+        // Summary
+        log($"\n══ Result: {passed}/{total} checks passed ══");
+
+        if (passed == total)
+        {
+            TimestampVenvStatus.Text = "✅ Ready";
+            TimestampVenvStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#66FF88"));
+            InstallTimestampDepsBtn.Content = "📦 Reinstall VLM Dependencies";
+        }
+        else
+        {
+            TimestampVenvStatus.Text = $"⚠ {passed}/{total} checks passed";
+            TimestampVenvStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FFAA44"));
+        }
+    }
+
+    private async void InstallTimestampDepsBtn_Click(object sender, RoutedEventArgs e)
+    {
+        InstallTimestampDepsBtn.IsEnabled = false;
+        TimestampInstallLog.Visibility = Visibility.Visible;
+        TimestampInstallLog.Text = "Starting VLM dependency installation...\n";
+
+        // Find base python
+        string basePython = "python";
+        var embeddedPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bin", "python", "python.exe");
+        if (File.Exists(embeddedPath)) basePython = embeddedPath;
+
+        var venvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, TIMESTAMP_VENV_NAME);
+        var venvPython = Path.Combine(venvPath, "Scripts", "python.exe");
+
+        Action<string> log = msg => Dispatcher.Invoke(() =>
+        {
+            TimestampInstallLog.AppendText(msg + "\n");
+            TimestampInstallLog.ScrollToEnd();
+        });
+
+        try
+        {
+            // 1. Create venv if not exists
+            if (!File.Exists(venvPython))
+            {
+                var baseInstaller = new PipInstaller(basePython);
+                log($"Creating dedicated venv at {venvPath}...");
+                await baseInstaller.CreateVenvAsync(venvPath, log);
+            }
+
+            if (File.Exists(venvPython))
+            {
+                var installer = new PipInstaller(venvPython);
+
+                if (!installer.IsPipInstalled())
+                {
+                    log("Pip not found in venv. Installing pip...");
+                    await installer.InstallPipAsync(log);
+                }
+
+                // 2. Install torch with CUDA 12.8 support (required for RTX 50-series sm_120)
+                log("Installing PyTorch with CUDA 12.8 support (RTX 50-series compatible)...");
+                await installer.TryRunCommandAsync(
+                    "-m pip install torch torchvision --upgrade --no-warn-script-location --index-url https://download.pytorch.org/whl/cu128", log);
+
+                // 3. Install transformers + accelerate
+                log("Installing transformers + accelerate...");
+                await installer.TryRunCommandAsync(
+                    "-m pip install transformers accelerate --upgrade --no-warn-script-location --prefer-binary", log);
+
+                // 4. Install qwen-vl-utils
+                log("Installing qwen-vl-utils...");
+                await installer.TryRunCommandAsync(
+                    "-m pip install qwen-vl-utils --upgrade --no-warn-script-location --prefer-binary", log);
+
+                // 5. Install Pillow
+                log("Installing Pillow...");
+                await installer.TryRunCommandAsync(
+                    "-m pip install Pillow --upgrade --no-warn-script-location --prefer-binary", log);
+
+                log("\n✅ All VLM dependencies installed successfully!");
+                await CheckTimestampVenvStatusAsync();
+                MessageBox.Show("VLM dependencies installed successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                log("[ERROR] Failed to create venv — python.exe not found.");
+            }
+        }
+        catch (Exception ex)
+        {
+            log($"[ERROR] Installation failed: {ex.Message}");
+            MessageBox.Show($"Installation failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            InstallTimestampDepsBtn.IsEnabled = true;
+        }
+    }
+
+    private void TimestampBrowseBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Select Video File",
+            Filter = "Video Files|*.mp4;*.mkv;*.avi;*.mov;*.wmv;*.flv;*.ts;*.m4v|All Files|*.*",
+            Multiselect = false
+        };
+        if (dlg.ShowDialog() == true)
+        {
+            _selectedTimestampVideoPath = dlg.FileName;
+            TimestampFileLabel.Text = dlg.FileName;
+            ExtractTimestampsBtn.IsEnabled = true;
+            TimestampStatusLabel.Text = "Ready — click Extract to begin";
+        }
+    }
+
+    private async void ExtractTimestampsBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_selectedTimestampVideoPath)) return;
+
+        // Get frame count from combo
+        var selectedItem = TimestampFrameCountCombo.SelectedItem as ComboBoxItem;
+        int numFrames = int.TryParse(selectedItem?.Tag?.ToString(), out var nf) ? nf : 5;
+
+        // UI state
+        ExtractTimestampsBtn.IsEnabled = false;
+        TimestampBrowseBtn.IsEnabled = false;
+        CancelTimestampBtn.IsEnabled = true;
+        TimestampProgress.Value = 0;
+        TimestampProgress.IsIndeterminate = true;
+        TimestampStatusLabel.Text = "Starting extraction...";
+        TimestampResultsGrid.ItemsSource = null;
+        TimestampConsensusLabel.Text = "—";
+        TimestampSummaryLabel.Text = "Extracting timestamps...";
+        TimestampLogConsole.Text = ""; // Clear log console
+
+        var results = new List<TimestampResult>();
+        string? consensus = null;
+        int framesReadable = 0;
+        int framesExtracted = 0;
+
+        // Hook into output to parse progress
+        Action<string> outputHandler = (line) =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                // Parse progress messages
+                if (line.StartsWith("[TIMESTAMP]"))
+                {
+                    var msg = line.Substring("[TIMESTAMP]".Length).Trim();
+                    TimestampStatusLabel.Text = msg;
+
+                    // Parse "Reading frame X/Y" for progress
+                    var match = System.Text.RegularExpressions.Regex.Match(msg, @"Reading frame (\d+)/(\d+)");
+                    if (match.Success)
+                    {
+                        var current = int.Parse(match.Groups[1].Value);
+                        var total = int.Parse(match.Groups[2].Value);
+                        TimestampProgress.IsIndeterminate = false;
+                        TimestampProgress.Maximum = total;
+                        TimestampProgress.Value = current;
+                    }
+                }
+
+                // Parse the final JSON result
+                if (line.StartsWith("[TIMESTAMP_RESULT]"))
+                {
+                    try
+                    {
+                        var json = line.Substring("[TIMESTAMP_RESULT]".Length).Trim();
+                        var doc = System.Text.Json.JsonDocument.Parse(json);
+                        var root = doc.RootElement;
+
+                        if (root.TryGetProperty("timestamps", out var tsArray))
+                        {
+                            foreach (var ts in tsArray.EnumerateArray())
+                            {
+                                results.Add(new TimestampResult
+                                {
+                                    FrameSec = ts.GetProperty("frame_sec").GetDouble().ToString("F1"),
+                                    RawText = ts.GetProperty("raw_text").GetString() ?? "",
+                                    Confidence = ts.GetProperty("confidence").GetString() ?? ""
+                                });
+                            }
+                        }
+
+                        if (root.TryGetProperty("consensus", out var c) && c.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            consensus = c.GetString();
+                        if (root.TryGetProperty("frames_readable", out var fr))
+                            framesReadable = fr.GetInt32();
+                        if (root.TryGetProperty("frames_extracted", out var fe))
+                            framesExtracted = fe.GetInt32();
+                    }
+                    catch (Exception ex)
+                    {
+                        TimestampStatusLabel.Text = $"Failed to parse results: {ex.Message}";
+                    }
+                }
+
+                // Log ALL output to the console so errors are visible
+                TimestampLogConsole.AppendText(line + "\n");
+                TimestampLogConsole.ScrollToEnd();
+
+                // Also log to main log
+                AppendLog(line);
+            });
+        };
+
+        _runner.OutputReceived += outputHandler;
+
+        try
+        {
+            await _runner.RunExtractTimestampsAsync(_selectedTimestampVideoPath, numFrames);
+
+            // Update UI with results
+            TimestampResultsGrid.ItemsSource = results;
+            TimestampConsensusLabel.Text = consensus ?? "Could not determine";
+            TimestampSummaryLabel.Text = $"Readable: {framesReadable}/{framesExtracted} frames";
+            TimestampProgress.IsIndeterminate = false;
+            TimestampProgress.Value = TimestampProgress.Maximum;
+            TimestampStatusLabel.Text = results.Count > 0 ? "Extraction complete ✓" : "No timestamps found";
+        }
+        catch (Exception ex)
+        {
+            TimestampStatusLabel.Text = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _runner.OutputReceived -= outputHandler;
+            ExtractTimestampsBtn.IsEnabled = true;
+            TimestampBrowseBtn.IsEnabled = true;
+            CancelTimestampBtn.IsEnabled = false;
+            TimestampProgress.IsIndeterminate = false;
+        }
+    }
+
+    private void CancelTimestampBtn_Click(object sender, RoutedEventArgs e)
+    {
+        _runner.Cancel();
+        TimestampStatusLabel.Text = "Cancelled";
+        TimestampProgress.IsIndeterminate = false;
+        TimestampProgress.Value = 0;
+        ExtractTimestampsBtn.IsEnabled = true;
+        TimestampBrowseBtn.IsEnabled = true;
+        CancelTimestampBtn.IsEnabled = false;
+    }
 }
 
 // ===== TRANSCRIPT LINE MODEL (for clickable lines) =====
@@ -2828,4 +3365,13 @@ public class AnalysisFileInfo
     public string FullSummary { get; set; } = "";
     /// <summary>Base media file name (without model suffix) for grouping versions.</summary>
     public string MediaName { get; set; } = "";
+}
+
+// ===== TIMESTAMP RESULT MODEL =====
+
+public class TimestampResult
+{
+    public string FrameSec { get; set; } = "";
+    public string RawText { get; set; } = "";
+    public string Confidence { get; set; } = "";
 }

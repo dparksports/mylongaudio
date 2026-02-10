@@ -507,7 +507,8 @@
                                                    FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
                                         <ComboBox x:Name="ModelSelector" Width="120" FontSize="10"
                                                   Background="#1A1A2A" Foreground="{StaticResource TextBrush}"
-                                                  BorderBrush="{StaticResource BorderBrush}" SelectedIndex="10">
+                                                  BorderBrush="{StaticResource BorderBrush}" SelectedIndex="10"
+                                                  SelectionChanged="ModelSelector_SelectionChanged">
                                             <ComboBoxItem Content="tiny" Tag="tiny"/>
                                             <ComboBoxItem Content="tiny.en" Tag="tiny.en"/>
                                             <ComboBoxItem Content="base" Tag="base"/>
@@ -766,6 +767,177 @@
                                 <DataGridTextColumn Header="Matching Content" Binding="{Binding MatchSnippet}" Width="*"/>
                             </DataGrid.Columns>
                         </DataGrid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ===== TIMESTAMPS TAB ===== -->
+            <TabItem Header="🕐 Timestamps">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="150"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- File Picker -->
+                    <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="TimestampBrowseBtn" Content="📂 Select Video File"
+                                    Style="{StaticResource AccentButton}"
+                                    Click="TimestampBrowseBtn_Click" FontSize="12" Padding="12,6"
+                                    ToolTip="Select a video file to extract timestamps from"/>
+                            <TextBlock x:Name="TimestampFileLabel" Grid.Column="1"
+                                       Text="No file selected" VerticalAlignment="Center"
+                                       Foreground="{StaticResource TextDimBrush}" FontSize="12"
+                                       Margin="12,0,0,0" TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Controls -->
+                    <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="InstallTimestampDepsBtn" Content="📦 Install VLM Dependencies"
+                                        Style="{StaticResource AccentButton}"
+                                        Click="InstallTimestampDepsBtn_Click" FontSize="12" Padding="12,6"
+                                        ToolTip="Install Qwen2.5-VL-7B dependencies into a dedicated venv"/>
+                                <TextBlock x:Name="TimestampVenvStatus" Text="⚠ Not installed"
+                                           Foreground="#FF8866" FontSize="11" VerticalAlignment="Center"
+                                           Margin="12,0,0,0"/>
+                                <Button x:Name="CheckTimestampStatusBtn" Content="🔄 Check Status"
+                                        Style="{StaticResource AccentButton}" FontSize="11" Padding="8,4"
+                                        Margin="8,0,0,0" Click="CheckTimestampStatusBtn_Click"
+                                        ToolTip="Check if VLM dependencies are installed"/>
+                                <Rectangle Width="1" Height="20" Fill="{StaticResource BorderBrush}" Margin="16,0,12,0"/>
+                                <Button x:Name="ExtractTimestampsBtn" Content="🔍 Extract Timestamps"
+                                        Style="{StaticResource AccentButton}"
+                                        Click="ExtractTimestampsBtn_Click" IsEnabled="False"
+                                        ToolTip="Extract burned-in timestamps using Qwen2.5-VL-7B"/>
+                                <TextBlock Text="Frames:" Foreground="{StaticResource TextDimBrush}"
+                                           FontSize="11" VerticalAlignment="Center" Margin="16,0,4,0"/>
+                                <ComboBox x:Name="TimestampFrameCountCombo" Width="60" FontSize="11"
+                                          SelectedIndex="2" ToolTip="Number of frames to sample from the video">
+                                    <ComboBoxItem Content="3" Tag="3"/>
+                                    <ComboBoxItem Content="5" Tag="5"/>
+                                    <ComboBoxItem Content="7" Tag="7"/>
+                                    <ComboBoxItem Content="10" Tag="10"/>
+                                    <ComboBoxItem Content="15" Tag="15"/>
+                                </ComboBox>
+                                <Button x:Name="CancelTimestampBtn" Content="⏹ Cancel"
+                                        Style="{StaticResource AccentButton}" Margin="12,0,0,0"
+                                        Click="CancelTimestampBtn_Click" IsEnabled="False"/>
+                            </StackPanel>
+                            <!-- Install log (hidden by default, shown during install) -->
+                            <TextBox x:Name="TimestampInstallLog" Height="120" Margin="0,8,0,0"
+                                     IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                                     Background="#1A1A2A" Foreground="{StaticResource TextDimBrush}"
+                                     BorderThickness="0" FontSize="10" FontFamily="Consolas"
+                                     Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Progress -->
+                    <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <ProgressBar x:Name="TimestampProgress" Grid.Row="0" Height="6"
+                                         Background="{StaticResource SurfaceBrush}"
+                                         Foreground="{StaticResource SuccessBrush}"
+                                         BorderThickness="0" Value="0"/>
+                            <TextBlock x:Name="TimestampStatusLabel" Grid.Row="1"
+                                       Foreground="{StaticResource TextDimBrush}"
+                                       FontSize="11" Margin="0,4,0,0" Text="Select a video file and click Extract"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Results DataGrid -->
+                    <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="2">
+                        <DataGrid x:Name="TimestampResultsGrid" AutoGenerateColumns="False"
+                                  IsReadOnly="True" SelectionMode="Single"
+                                  Background="Transparent"
+                                  Foreground="{StaticResource TextBrush}"
+                                  BorderThickness="0"
+                                  RowBackground="{StaticResource SurfaceBrush}"
+                                  AlternatingRowBackground="#252536"
+                                  GridLinesVisibility="Horizontal"
+                                  HorizontalGridLinesBrush="{StaticResource BorderBrush}"
+                                  HeadersVisibility="Column" CanUserResizeRows="False"
+                                  FontSize="12">
+                            <DataGrid.ColumnHeaderStyle>
+                                <Style TargetType="DataGridColumnHeader">
+                                    <Setter Property="Background" Value="#1A1A2A"/>
+                                    <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+                                    <Setter Property="Padding" Value="8,6"/>
+                                    <Setter Property="FontSize" Value="11"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                                    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                </Style>
+                            </DataGrid.ColumnHeaderStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Frame Time (s)" Binding="{Binding FrameSec}" Width="120"/>
+                                <DataGridTextColumn Header="Extracted Timestamp" Binding="{Binding RawText}" Width="*"/>
+                                <DataGridTextColumn Header="Confidence" Binding="{Binding Confidence}" Width="100"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <!-- Consensus Summary -->
+                    <Border Grid.Row="4" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="10,8" Margin="0,8,0,0">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="📋 Consensus:" Foreground="{StaticResource TextBrush}"
+                                           FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="TimestampConsensusLabel"
+                                           Text="—" Foreground="{StaticResource AccentLightBrush}"
+                                           FontSize="13" FontWeight="Bold" Margin="8,0,0,0"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock x:Name="TimestampSummaryLabel"
+                                       Foreground="{StaticResource TextDimBrush}" FontSize="11"
+                                       Margin="0,4,0,0" Text="Extract timestamps to see results"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Log Console -->
+                    <Border Grid.Row="5" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="2" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="🔧 Engine Log" Foreground="{StaticResource TextDimBrush}"
+                                       FontSize="11" FontWeight="SemiBold" Margin="8,4"/>
+                            <TextBox x:Name="TimestampLogConsole" Grid.Row="1" IsReadOnly="True"
+                                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                                     Background="#0D0D1A" Foreground="{StaticResource TextDimBrush}"
+                                     BorderThickness="0" FontSize="10" FontFamily="Consolas"
+                                     Text="Engine output will appear here..."/>
+                        </Grid>
                     </Border>
                 </Grid>
             </TabItem>
