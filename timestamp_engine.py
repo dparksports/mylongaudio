@@ -4,6 +4,7 @@ Standalone script for the TurboScribe Timestamps tab.
 
 Usage:
   python timestamp_engine.py <video_file> [--num-frames 5] [--crop-ratio 0.08]
+  python timestamp_engine.py --batch-folder <folder> [--crop-ratio 0.08]
 """
 
 import argparse
@@ -98,6 +99,11 @@ def _extract_frames(video_path, num_frames=5):
     # Calculate timestamps for evenly spaced frames
     if num_frames == 1:
         timestamps = [duration / 2]
+    elif num_frames == 2:
+        # Batch mode: first + last frame (avoid black frames at edges)
+        start = min(2.0, duration * 0.05)
+        end = max(duration - 2.0, duration * 0.95)
+        timestamps = [start, end]
     else:
         # Avoid first/last 1 second to skip potential black frames
         start = min(1.0, duration * 0.05)
@@ -295,11 +301,102 @@ def run_extract_timestamps(file_path, num_frames=5, crop_ratio=0.08):
     return output
 
 
+def run_batch_rename(folder_path, crop_ratio=0.08):
+    """
+    Process all .mp4 files in a folder, extracting start/end timestamps
+    for batch renaming. Uses only 2 frames per video for speed.
+    """
+    import glob
+
+    if not os.path.isdir(folder_path):
+        print(f"[ERROR] Folder not found: {folder_path}")
+        return
+
+    mp4_files = sorted(glob.glob(os.path.join(folder_path, "*.mp4")))
+    if not mp4_files:
+        print(f"[ERROR] No .mp4 files found in {folder_path}")
+        return
+
+    print(f"[BATCH] Found {len(mp4_files)} video(s) in {folder_path}")
+
+    # Pre-load VLM once for all videos
+    model, processor = _load_vlm()
+    if model is None:
+        print("[ERROR] Cannot load VLM model — aborting batch.")
+        return
+
+    for idx, video_path in enumerate(mp4_files):
+        filename = os.path.basename(video_path)
+        print(f"\n[BATCH] Processing {idx+1}/{len(mp4_files)}: {filename}")
+
+        # Extract only 2 frames: first + last
+        frames, duration = _extract_frames(video_path, num_frames=2)
+        if len(frames) < 2:
+            print(f"[BATCH] Skipping {filename} — could not extract 2 frames")
+            result = {
+                "file": filename,
+                "path": os.path.abspath(video_path),
+                "start_timestamp": None,
+                "end_timestamp": None,
+                "error": "Could not extract frames"
+            }
+            print(f"[BATCH_RESULT] {json.dumps(result)}")
+            # Cleanup
+            _cleanup_frames(frames)
+            continue
+
+        start_text = None
+        end_text = None
+
+        for i, frame in enumerate(frames):
+            cropped = _crop_timestamp_region(frame["path"], crop_ratio)
+            raw = _read_timestamp_from_image(model, processor, cropped)
+            if raw and raw != "NONE" and raw != "ERROR":
+                if i == 0:
+                    start_text = raw
+                else:
+                    end_text = raw
+            label = "start" if i == 0 else "end"
+            print(f"[BATCH]   {label}: {raw}")
+
+        result = {
+            "file": filename,
+            "path": os.path.abspath(video_path),
+            "start_timestamp": start_text,
+            "end_timestamp": end_text,
+            "duration_sec": round(duration, 1)
+        }
+        print(f"[BATCH_RESULT] {json.dumps(result)}")
+
+        # Cleanup temp frames
+        _cleanup_frames(frames)
+
+    print(f"\n[BATCH] Done — processed {len(mp4_files)} videos.")
+
+
+def _cleanup_frames(frames):
+    """Remove temporary frame files."""
+    for frame in frames:
+        tmp_dir = os.path.dirname(frame["path"])
+        if "ts_frames_" in tmp_dir:
+            try:
+                shutil.rmtree(tmp_dir)
+            except Exception:
+                pass
+            break
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract burned-in timestamps from video files using Qwen2.5-VL-7B")
-    parser.add_argument("file", help="Path to video file")
+    parser.add_argument("file", nargs="?", help="Path to video file")
+    parser.add_argument("--batch-folder", help="Process all .mp4 files in a folder (batch rename mode)")
     parser.add_argument("--num-frames", type=int, default=5, help="Number of frames to extract (default: 5)")
     parser.add_argument("--crop-ratio", type=float, default=0.08, help="Fraction of frame height to crop from top (default: 0.08)")
     args = parser.parse_args()
 
-    run_extract_timestamps(args.file, num_frames=args.num_frames, crop_ratio=args.crop_ratio)
+    if args.batch_folder:
+        run_batch_rename(args.batch_folder, crop_ratio=args.crop_ratio)
+    elif args.file:
+        run_extract_timestamps(args.file, num_frames=args.num_frames, crop_ratio=args.crop_ratio)
+    else:
+        parser.print_help()

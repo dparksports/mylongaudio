@@ -778,8 +778,10 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
                         <RowDefinition Height="150"/>
                     </Grid.RowDefinitions>
 
@@ -921,8 +923,83 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Log Console -->
+                    <!-- ===== BATCH RENAME SECTION ===== -->
                     <Border Grid.Row="5" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="10,8" Margin="0,8,0,0">
+                        <StackPanel>
+                            <TextBlock Text="📁 Batch Video Rename" FontSize="14" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextBrush}" Margin="0,0,0,8"/>
+                            <TextBlock Text="Select a folder of videos to extract timestamps and rename files to YYYYMMDD_HHMMSS-HHMMSS_location.mp4"
+                                       Foreground="{StaticResource TextDimBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="BatchFolderBtn" Content="📂 Select Folder"
+                                        Style="{StaticResource AccentButton}"
+                                        Click="BatchFolderBtn_Click" FontSize="12" Padding="12,6"
+                                        ToolTip="Select a folder containing .mp4 video files"/>
+                                <TextBlock x:Name="BatchFolderLabel" Text="No folder selected"
+                                           VerticalAlignment="Center" Foreground="{StaticResource TextDimBrush}"
+                                           FontSize="12" Margin="12,0,0,0" TextTrimming="CharacterEllipsis"
+                                           MaxWidth="400"/>
+                                <Rectangle Width="1" Height="20" Fill="{StaticResource BorderBrush}" Margin="16,0,12,0"/>
+                                <Button x:Name="BatchScanBtn" Content="🔍 Scan Timestamps"
+                                        Style="{StaticResource AccentButton}"
+                                        Click="BatchScanBtn_Click" IsEnabled="False" FontSize="12" Padding="12,6"
+                                        ToolTip="Extract start/end timestamps from all videos in the folder"/>
+                                <Button x:Name="BatchRenameBtn" Content="✏️ Rename Files"
+                                        Style="{StaticResource AccentButton}"
+                                        Click="BatchRenameBtn_Click" IsEnabled="False" FontSize="12" Padding="12,6"
+                                        Margin="8,0,0,0" ToolTip="Rename files using extracted timestamps"/>
+                                <Button x:Name="BatchCancelBtn" Content="⏹ Cancel"
+                                        Style="{StaticResource AccentButton}" Margin="8,0,0,0"
+                                        Click="BatchCancelBtn_Click" IsEnabled="False"/>
+                            </StackPanel>
+                            <ProgressBar x:Name="BatchProgress" Height="6" Margin="0,8,0,0"
+                                         Background="{StaticResource SurfaceBrush}"
+                                         Foreground="{StaticResource SuccessBrush}"
+                                         BorderThickness="0" Value="0"/>
+                            <TextBlock x:Name="BatchStatusLabel" Foreground="{StaticResource TextDimBrush}"
+                                       FontSize="11" Margin="0,4,0,0" Text="Select a folder to begin"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Batch Rename Preview Grid -->
+                    <Border Grid.Row="6" Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="2" Margin="0,8,0,0">
+                        <DataGrid x:Name="BatchRenameGrid" AutoGenerateColumns="False"
+                                  IsReadOnly="True" SelectionMode="Single"
+                                  Background="Transparent"
+                                  Foreground="{StaticResource TextBrush}"
+                                  BorderThickness="0"
+                                  RowBackground="{StaticResource SurfaceBrush}"
+                                  AlternatingRowBackground="#252536"
+                                  GridLinesVisibility="Horizontal"
+                                  HorizontalGridLinesBrush="{StaticResource BorderBrush}"
+                                  HeadersVisibility="Column" CanUserResizeRows="False"
+                                  FontSize="12" MaxHeight="300">
+                            <DataGrid.ColumnHeaderStyle>
+                                <Style TargetType="DataGridColumnHeader">
+                                    <Setter Property="Background" Value="#1A1A2A"/>
+                                    <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+                                    <Setter Property="Padding" Value="8,6"/>
+                                    <Setter Property="FontSize" Value="11"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                                    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                </Style>
+                            </DataGrid.ColumnHeaderStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Original Filename" Binding="{Binding OriginalName}" Width="*"/>
+                                <DataGridTextColumn Header="→" Width="30"/>
+                                <DataGridTextColumn Header="New Filename" Binding="{Binding NewName}" Width="*"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <!-- Log Console -->
+                    <Border Grid.Row="7" Background="{StaticResource SurfaceBrush}"
                             BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                             CornerRadius="8" Padding="2" Margin="0,8,0,0">
                         <Grid>

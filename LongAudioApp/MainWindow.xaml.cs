@@ -133,7 +133,7 @@ public class MediaFileInfo
 
 public partial class MainWindow : Window
 {
-    private PythonRunner _runner;
+    private PythonRunner _runner = null!;
     private ScanReport? _report;
     private readonly string _scriptDir;
     private readonly string _reportPath;
@@ -2932,7 +2932,7 @@ public partial class MainWindow : Window
 
     private const string TIMESTAMP_VENV_NAME = "timestamp_venv";
     private string? _selectedTimestampVideoPath;
-    private CancellationTokenSource? _timestampCts;
+
 
     private async void CheckTimestampStatusBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -3333,6 +3333,289 @@ public partial class MainWindow : Window
         TimestampBrowseBtn.IsEnabled = true;
         CancelTimestampBtn.IsEnabled = false;
     }
+
+    // ===== BATCH VIDEO RENAME =====
+
+    private string? _batchFolderPath;
+    private List<BatchRenameItem> _batchItems = new();
+
+    private void BatchFolderBtn_Click(object sender, RoutedEventArgs e)
+    {
+        // Use WPF OpenFileDialog — user selects any .mp4 in the target folder
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Select any .mp4 file in the target folder",
+            Filter = "Video Files|*.mp4",
+            Multiselect = false
+        };
+        if (dlg.ShowDialog() == true)
+        {
+            var folder = Path.GetDirectoryName(dlg.FileName) ?? "";
+            _batchFolderPath = folder;
+            BatchFolderLabel.Text = folder;
+            BatchScanBtn.IsEnabled = true;
+            BatchRenameBtn.IsEnabled = false;
+            BatchRenameGrid.ItemsSource = null;
+            _batchItems.Clear();
+
+            var mp4Count = Directory.GetFiles(folder, "*.mp4").Length;
+            BatchStatusLabel.Text = $"Found {mp4Count} .mp4 files — click Scan Timestamps";
+        }
+    }
+
+    private async void BatchScanBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_batchFolderPath)) return;
+
+        // UI state
+        BatchScanBtn.IsEnabled = false;
+        BatchFolderBtn.IsEnabled = false;
+        BatchRenameBtn.IsEnabled = false;
+        BatchCancelBtn.IsEnabled = true;
+        BatchProgress.Value = 0;
+        BatchProgress.IsIndeterminate = true;
+        BatchStatusLabel.Text = "Loading VLM model + scanning timestamps...";
+        _batchItems.Clear();
+        BatchRenameGrid.ItemsSource = null;
+        TimestampLogConsole.Text = ""; // Clear log
+
+        int totalFiles = Directory.GetFiles(_batchFolderPath, "*.mp4").Length;
+        int processed = 0;
+
+        Action<string> outputHandler = (line) =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                // Parse batch progress
+                if (line.StartsWith("[BATCH]"))
+                {
+                    var msg = line.Substring("[BATCH]".Length).Trim();
+                    BatchStatusLabel.Text = msg;
+
+                    // Parse "Processing X/Y" for progress
+                    var match = System.Text.RegularExpressions.Regex.Match(msg, @"Processing (\d+)/(\d+)");
+                    if (match.Success)
+                    {
+                        processed = int.Parse(match.Groups[1].Value);
+                        var total = int.Parse(match.Groups[2].Value);
+                        BatchProgress.IsIndeterminate = false;
+                        BatchProgress.Maximum = total;
+                        BatchProgress.Value = processed;
+                    }
+                }
+
+                // Parse per-file result
+                if (line.StartsWith("[BATCH_RESULT]"))
+                {
+                    try
+                    {
+                        var json = line.Substring("[BATCH_RESULT]".Length).Trim();
+                        var doc = System.Text.Json.JsonDocument.Parse(json);
+                        var root = doc.RootElement;
+
+                        var filename = root.GetProperty("file").GetString() ?? "";
+                        string? startTs = null, endTs = null;
+
+                        if (root.TryGetProperty("start_timestamp", out var st) && st.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            startTs = st.GetString();
+                        if (root.TryGetProperty("end_timestamp", out var et) && et.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            endTs = et.GetString();
+
+                        var location = ParseLocationFromFilename(filename);
+                        var newName = GenerateNewFilename(startTs, endTs, location, filename);
+
+                        var item = new BatchRenameItem
+                        {
+                            OriginalName = filename,
+                            NewName = newName,
+                            FullPath = root.GetProperty("path").GetString() ?? "",
+                            StartTimestamp = startTs,
+                            EndTimestamp = endTs,
+                            Status = (startTs != null && endTs != null) ? "Ready" : "⚠ Missing"
+                        };
+                        _batchItems.Add(item);
+                        BatchRenameGrid.ItemsSource = null;
+                        BatchRenameGrid.ItemsSource = _batchItems;
+                    }
+                    catch (Exception ex)
+                    {
+                        BatchStatusLabel.Text = $"Parse error: {ex.Message}";
+                    }
+                }
+
+                // Log all output
+                TimestampLogConsole.AppendText(line + "\n");
+                TimestampLogConsole.ScrollToEnd();
+                AppendLog(line);
+            });
+        };
+
+        _runner.OutputReceived += outputHandler;
+
+        try
+        {
+            await _runner.RunBatchTimestampsAsync(_batchFolderPath);
+
+            BatchProgress.IsIndeterminate = false;
+            BatchProgress.Value = BatchProgress.Maximum;
+            var readyCount = _batchItems.Count(i => i.Status == "Ready");
+            BatchStatusLabel.Text = $"Scan complete — {readyCount}/{_batchItems.Count} files ready to rename";
+            BatchRenameBtn.IsEnabled = readyCount > 0;
+        }
+        catch (Exception ex)
+        {
+            BatchStatusLabel.Text = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _runner.OutputReceived -= outputHandler;
+            BatchScanBtn.IsEnabled = true;
+            BatchFolderBtn.IsEnabled = true;
+            BatchCancelBtn.IsEnabled = false;
+            BatchProgress.IsIndeterminate = false;
+        }
+    }
+
+    private void BatchCancelBtn_Click(object sender, RoutedEventArgs e)
+    {
+        _runner.Cancel();
+        BatchStatusLabel.Text = "Cancelled";
+        BatchProgress.IsIndeterminate = false;
+        BatchProgress.Value = 0;
+        BatchScanBtn.IsEnabled = true;
+        BatchFolderBtn.IsEnabled = true;
+        BatchCancelBtn.IsEnabled = false;
+    }
+
+    private async void BatchRenameBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var readyItems = _batchItems.Where(i => i.Status == "Ready").ToList();
+        if (readyItems.Count == 0) return;
+
+        var result = MessageBox.Show(
+            $"Rename {readyItems.Count} file(s)?\n\nThis will rename the original video files. This action cannot be undone.",
+            "Confirm Batch Rename",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes) return;
+
+        BatchRenameBtn.IsEnabled = false;
+        int success = 0, fail = 0;
+
+        foreach (var item in readyItems)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(item.FullPath) ?? ".";
+                var newPath = Path.Combine(dir, item.NewName);
+
+                // Don't overwrite existing files
+                if (File.Exists(newPath))
+                {
+                    item.Status = "⚠ Exists";
+                    fail++;
+                    continue;
+                }
+
+                File.Move(item.FullPath, newPath);
+                item.FullPath = newPath;
+                item.Status = "✅ Done";
+                success++;
+            }
+            catch (Exception ex)
+            {
+                item.Status = $"❌ {ex.Message}";
+                fail++;
+            }
+        }
+
+        BatchRenameGrid.ItemsSource = null;
+        BatchRenameGrid.ItemsSource = _batchItems;
+        BatchStatusLabel.Text = $"Rename complete — {success} renamed, {fail} failed";
+        BatchRenameBtn.IsEnabled = false;
+    }
+
+    /// <summary>
+    /// Parse location from filename pattern: reo***-*-{location}-*.mp4
+    /// Example: reo1102-3-fence1104-1-20260208125315-16.mp4 → fence1104
+    /// </summary>
+    private string ParseLocationFromFilename(string filename)
+    {
+        // Pattern: reo{digits}-{digit}-{LOCATION}-{rest}.mp4
+        var match = System.Text.RegularExpressions.Regex.Match(
+            filename, @"^reo\d+-\d+-([^-]+)-", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (match.Success)
+            return match.Groups[1].Value;
+
+        // Fallback: use filename without extension
+        return Path.GetFileNameWithoutExtension(filename);
+    }
+
+    /// <summary>
+    /// Generate new filename from timestamps: YYYYMMDD_HHMMSS-HHMMSS_location.mp4
+    /// </summary>
+    private string GenerateNewFilename(string? startTs, string? endTs, string location, string originalFilename)
+    {
+        if (string.IsNullOrEmpty(startTs) || string.IsNullOrEmpty(endTs))
+            return originalFilename; // Can't rename without timestamps
+
+        try
+        {
+            var startParsed = ParseTimestampText(startTs);
+            var endParsed = ParseTimestampText(endTs);
+
+            if (startParsed == null || endParsed == null)
+                return originalFilename;
+
+            var startStr = startParsed.Value.ToString("yyyyMMdd_HHmmss");
+            var endStr = endParsed.Value.ToString("HHmmss");
+            return $"{startStr}-{endStr}_{location}.mp4";
+        }
+        catch
+        {
+            return originalFilename;
+        }
+    }
+
+    /// <summary>
+    /// Parse VLM-extracted timestamp text into DateTime.
+    /// Handles formats like "2026/01/27 11:00:00" or "01/27/2026 11:00:00 AM" etc.
+    /// </summary>
+    private DateTime? ParseTimestampText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        // Clean up common OCR artifacts
+        text = text.Trim().Replace("  ", " ");
+
+        // Try multiple common timestamp formats
+        string[] formats = {
+            "yyyy/MM/dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+            "MM/dd/yyyy HH:mm:ss",
+            "MM/dd/yyyy hh:mm:ss tt",
+            "dd/MM/yyyy HH:mm:ss",
+            "yyyy/M/d H:mm:ss",
+            "yyyy-M-d H:mm:ss",
+            "M/d/yyyy H:mm:ss",
+            "yyyy/MM/dd H:mm:ss",
+        };
+
+        foreach (var fmt in formats)
+        {
+            if (DateTime.TryParseExact(text, fmt,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var dt))
+                return dt;
+        }
+
+        // Last resort: general parse
+        if (DateTime.TryParse(text, out var dtGeneral))
+            return dtGeneral;
+
+        return null;
+    }
 }
 
 // ===== TRANSCRIPT LINE MODEL (for clickable lines) =====
@@ -3374,4 +3657,16 @@ public class TimestampResult
     public string FrameSec { get; set; } = "";
     public string RawText { get; set; } = "";
     public string Confidence { get; set; } = "";
+}
+
+// ===== BATCH RENAME ITEM MODEL =====
+
+public class BatchRenameItem
+{
+    public string OriginalName { get; set; } = "";
+    public string NewName { get; set; } = "";
+    public string FullPath { get; set; } = "";
+    public string? StartTimestamp { get; set; }
+    public string? EndTimestamp { get; set; }
+    public string Status { get; set; } = "Pending";
 }
