@@ -2495,8 +2495,13 @@ public partial class MainWindow : Window
 
     // ===== MEDIA PLAYER HANDLERS =====
 
+    // Matches HH:MM:SS or H:MM:SS format, e.g. [0:34:20] or [1:02:15.5]
     private static readonly System.Text.RegularExpressions.Regex _timestampRegex = 
-        new(@"^\[?(\d{1,2}):?(\d{2}):?(\d{2}(?:\.\d+)?)\]?\s*(.*)", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"^\[?(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)\]?\s*(.*)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // Matches seconds-range format, e.g. [2060.00 – 2065.00] or [2060.00 - 2065.00]
+    private static readonly System.Text.RegularExpressions.Regex _secondsRangeRegex =
+        new(@"^\[(\d+(?:\.\d+)?)\s*[\u2013\-]\s*(\d+(?:\.\d+)?)\]\s*(.*)", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private void LoadTranscriptLines(string content)
     {
@@ -2507,6 +2512,7 @@ public partial class MainWindow : Window
             var line = rawLine.TrimEnd('\r');
             if (string.IsNullOrWhiteSpace(line)) continue;
 
+            // Try HH:MM:SS format first
             var match = _timestampRegex.Match(line);
             if (match.Success)
             {
@@ -2520,17 +2526,34 @@ public partial class MainWindow : Window
                     TimeLabel = $"[{h}:{m:D2}:{(int)s:D2}]",
                     Text = match.Groups[4].Value.Trim()
                 });
+                continue;
             }
-            else
+
+            // Try seconds-range format: [2060.00 – 2065.00] text
+            var rangeMatch = _secondsRangeRegex.Match(line);
+            if (rangeMatch.Success)
             {
-                // Non-timestamped line
+                double startSec = double.Parse(rangeMatch.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+                var offset = TimeSpan.FromSeconds(startSec);
+                int h = (int)offset.TotalHours;
+                int m = offset.Minutes;
+                int s = offset.Seconds;
                 newLines.Add(new TranscriptLine
                 {
-                    Offset = TimeSpan.Zero,
-                    TimeLabel = "",
-                    Text = line
+                    Offset = offset,
+                    TimeLabel = $"[{h}:{m:D2}:{s:D2}]",
+                    Text = rangeMatch.Groups[3].Value.Trim()
                 });
+                continue;
             }
+
+            // Non-timestamped line
+            newLines.Add(new TranscriptLine
+            {
+                Offset = TimeSpan.Zero,
+                TimeLabel = "",
+                Text = line
+            });
         }
         _currentTranscriptLines = newLines;
         TranscriptLineList.ItemsSource = null;
