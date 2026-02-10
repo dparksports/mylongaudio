@@ -2,7 +2,7 @@
 
 **Transcribe entire drives of audio and video — free, local and private.**
 
-TurboScribe is a Windows desktop app powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper) that transcribes your media files entirely on your machine. No cloud services, no subscriptions, and no data ever leaves your computer. Point it at any drive — local, USB, or network — and let it process everything automatically.
+TurboScribe is a Windows desktop app powered by a custom turbo charged whisper that transcribes your media files entirely on your machine. No cloud services, no subscriptions, and no data ever leaves your computer. Point it at any drive — local, USB, or network — and let it process everything automatically.
 
 ---
 
@@ -25,7 +25,7 @@ Extract the zip → run `TurboScribe.exe` → done.
 ## ✨ Features
 
 ### Transcription
-- **GPU-accelerated** via faster-whisper and CTranslate2 — up to 4× faster than standard Whisper
+- **GPU-accelerated** via a custom whisper — up to 4× faster than standard Whisper
 - **Multiple Whisper models** — tiny, base, small, medium, large-v1/v2/v3, turbo
 - **English-only filter** — toggle to show only English-optimized models
 - **Re-transcribe** — re-run any file with a different model and compare versions side-by-side
