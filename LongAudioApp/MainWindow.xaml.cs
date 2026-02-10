@@ -98,6 +98,11 @@ public partial class MainWindow : Window
     private readonly string _scriptDir;
     private readonly string _reportPath;
     private string? _selectedTranscriptPath;
+    // Media player state
+    private DispatcherTimer? _playerTimer;
+    private bool _isSeeking;
+    private bool _isPlayerPlaying;
+    private List<TranscriptLine> _currentTranscriptLines = new();
 
     protected override void OnClosed(EventArgs e)
     {
@@ -912,7 +917,7 @@ public partial class MainWindow : Window
 
     private void ApplyTranscriptView()
     {
-        if (TranscriptList == null || AnalysisTranscriptList == null) return;
+        if (TranscriptList == null) return;
         var sortTag = (TranscriptSortCombo?.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "date";
         var filter = TranscriptFilterBox?.Text?.Trim() ?? "";
 
@@ -929,27 +934,6 @@ public partial class MainWindow : Window
 
         var list = sorted.ToList();
         TranscriptList.ItemsSource = list;
-
-        // Sync Analysis tab with same sort/filter
-        var aSortTag = (AnalysisSortCombo?.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? sortTag;
-        var aFilter = AnalysisFilterBox?.Text?.Trim() ?? "";
-
-        IEnumerable<TranscriptFileInfo> aFiltered = _allTranscripts;
-        if (!string.IsNullOrEmpty(aFilter))
-            aFiltered = aFiltered.Where(t => t.FileName.Contains(aFilter, StringComparison.OrdinalIgnoreCase));
-
-        var aSorted = aSortTag switch
-        {
-            "size" => aFiltered.OrderByDescending(t => t.CharCount),
-            "name" => aFiltered.OrderBy(t => t.FileName, StringComparer.OrdinalIgnoreCase),
-            _ => aFiltered.OrderByDescending(t => t.LastModified)
-        };
-
-        AnalysisTranscriptList.ItemsSource = aSorted.Select(t => new AnalysisFileInfo
-        {
-            FileName = t.FileName,
-            FullPath = t.FullPath,
-        }).ToList();
     }
 
     private void TranscriptSortCombo_Changed(object sender, SelectionChangedEventArgs e) => ApplyTranscriptView();
@@ -960,8 +944,7 @@ public partial class MainWindow : Window
             FilterPlaceholder.Visibility = string.IsNullOrEmpty(TranscriptFilterBox.Text) 
                 ? Visibility.Visible : Visibility.Collapsed;
     }
-    private void AnalysisSortCombo_Changed(object sender, SelectionChangedEventArgs e) => ApplyTranscriptView();
-    private void AnalysisFilterBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyTranscriptView();
+    // AnalysisSortCombo_Changed and AnalysisFilterBox_TextChanged removed — Analysis tab merged
 
     private void BrowseBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -1097,7 +1080,9 @@ public partial class MainWindow : Window
             try
             {
                 var content = File.ReadAllText(info.FullPath);
-                SetContentBoxText(content);
+                // Parse into clickable transcript lines
+                LoadTranscriptLines(content);
+
                 var mediaPath = info.SourceMediaPath;
                 TranscriptFileLabel.Text = mediaPath != null 
                     ? $"📂 {mediaPath}" 
@@ -1105,22 +1090,33 @@ public partial class MainWindow : Window
                 OpenMediaBtn.Visibility = mediaPath != null ? Visibility.Visible : Visibility.Collapsed;
                 OpenInExplorerBtn.Visibility = Visibility.Visible;
 
-                // Always show re-transcribe panel
+                // Enable action buttons
+                InlineSummarizeBtn.IsEnabled = true;
+                InlineOutlineBtn.IsEnabled = true;
+                RetranscribeBtn.IsEnabled = true;
                 RetranscribePanel.Visibility = Visibility.Visible;
 
                 // Show version count on Compare button
                 var versions = FindSiblingVersions(info);
                 CompareBtn.Content = versions.Count > 1 
-                    ? $"📊 Compare ({versions.Count} versions)" 
-                    : "📊 Compare Versions";
+                    ? $"📊 Compare ({versions.Count})" 
+                    : "📊 Compare";
                 CompareBtn.IsEnabled = versions.Count > 1;
+                CompareBtn.Visibility = versions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+
+                // Detect versions for inline version selector
+                DetectTranscriptVersions(info);
+
+                // Load media into embedded player
+                LoadMediaForTranscript(mediaPath);
 
                 StatusBar.Text = $"Viewing: {info.FileName}" + 
                     (versions.Count > 1 ? $" ({versions.Count} versions available)" : "");
             }
             catch (Exception ex)
             {
-                SetContentBoxText($"Error reading file: {ex.Message}");
+                TranscriptLineList.ItemsSource = null;
+                AnalysisOutputBox.Text = $"Error reading file: {ex.Message}";
             }
         }
     }
@@ -1269,19 +1265,18 @@ public partial class MainWindow : Window
             versionData.Add((label, allLines));
         }
 
-        // Build a color-coded diff in the RichTextBox
-        var doc = new FlowDocument { PageWidth = 2000 };
-        doc.Blocks.Add(MakeParagraph(
-            $"📊 Comparing {versionData.Count} versions for: {Path.GetFileName(info.SourceMediaPath ?? info.FileName)}\n",
-            "#A78BFA", true));
+        // Build a text-based diff in AnalysisOutputBox
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Comparing {versionData.Count} versions for: {Path.GetFileName(info.SourceMediaPath ?? info.FileName)}");
+        sb.AppendLine();
 
-        // Side by side: compare first version vs each other version
+        // Compare first version vs each other version
         var baseline = versionData[0];
         for (int v = 1; v < versionData.Count; v++)
         {
             var compare = versionData[v];
-            doc.Blocks.Add(MakeParagraph(
-                $"\n═══ {baseline.label} vs {compare.label} ═══\n", "#F59E0B", true));
+            sb.AppendLine($"=== {baseline.label} vs {compare.label} ===");
+            sb.AppendLine();
 
             var maxLines = Math.Max(baseline.lines.Length, compare.lines.Length);
             for (int i = 0; i < maxLines; i++)
@@ -1291,21 +1286,17 @@ public partial class MainWindow : Window
 
                 if (lineA == lineB)
                 {
-                    // Same — dim
-                    doc.Blocks.Add(MakeParagraph($"  {lineA}", "#94A3B8", false));
+                    sb.AppendLine($"  {lineA}");
                 }
                 else
                 {
-                    // Different — highlight
-                    if (!string.IsNullOrWhiteSpace(lineA))
-                        doc.Blocks.Add(MakeParagraph($"- [{baseline.label}] {lineA}", "#EF4444", false));
-                    if (!string.IsNullOrWhiteSpace(lineB))
-                        doc.Blocks.Add(MakeParagraph($"+ [{compare.label}] {lineB}", "#22C55E", false));
+                    if (!string.IsNullOrWhiteSpace(lineA)) sb.AppendLine($"- [{baseline.label}] {lineA}");
+                    if (!string.IsNullOrWhiteSpace(lineB)) sb.AppendLine($"+ [{compare.label}] {lineB}");
                 }
             }
+            sb.AppendLine();
         }
-
-        TranscriptContentBox.Document = doc;
+        AnalysisOutputBox.Text = sb.ToString();
         StatusBar.Text = $"Comparing {versionData.Count} transcript versions";
     }
 
@@ -1313,15 +1304,7 @@ public partial class MainWindow : Window
 
     private void SetContentBoxText(string text)
     {
-        var doc = new FlowDocument { PageWidth = 2000 };
-        var para = new Paragraph(new Run(text))
-        {
-            Foreground = (SolidColorBrush)FindResource("TextBrush"),
-            FontFamily = new FontFamily("Cascadia Mono,Consolas,Courier New"),
-            FontSize = 12
-        };
-        doc.Blocks.Add(para);
-        TranscriptContentBox.Document = doc;
+        AnalysisOutputBox.Text = text;
     }
 
     private static Paragraph MakeParagraph(string text, string hexColor, bool bold)
@@ -1489,8 +1472,8 @@ public partial class MainWindow : Window
     /// <summary>Run analysis from context menu — uses Analysis tab settings, switches to Analysis tab to show results.</summary>
     private async Task RunContextMenuAnalysis(string transcriptPath, string analyzeType)
     {
-        // Switch to Analysis tab to show output
-        MainTabControl.SelectedIndex = 1; // Analysis tab is index 1
+        // Stay on Transcribe tab (index 0) to show output
+        // Analysis tab was merged into Transcribe tab
 
         var provider = (LlmProviderCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "local";
         string? model = null;
@@ -1514,8 +1497,8 @@ public partial class MainWindow : Window
 
         AnalysisStatusLabel.Text = $"Running {analyzeType} on {Path.GetFileName(transcriptPath)}...";
         AnalysisOutputBox.Text = "Processing...";
-        SummarizeAllBtn.IsEnabled = false;
-        OutlineAllBtn.IsEnabled = false;
+        InlineSummarizeBtn.IsEnabled = false;
+        InlineOutlineBtn.IsEnabled = false;
         CancelAnalysisBtn.IsEnabled = true;
 
         try
@@ -1528,8 +1511,8 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SummarizeAllBtn.IsEnabled = true;
-            OutlineAllBtn.IsEnabled = true;
+            InlineSummarizeBtn.IsEnabled = true;
+            InlineOutlineBtn.IsEnabled = true;
             CancelAnalysisBtn.IsEnabled = false;
         }
     }
@@ -1702,15 +1685,7 @@ public partial class MainWindow : Window
         else if (tag == "claude") CloudModelBox.Text = "claude-sonnet-4-20250514";
     }
 
-    private async void SummarizeAllBtn_Click(object sender, RoutedEventArgs e)
-    {
-        await RunAnalysisOnSelected("summarize");
-    }
-
-    private async void OutlineAllBtn_Click(object sender, RoutedEventArgs e)
-    {
-        await RunAnalysisOnSelected("outline");
-    }
+    // SummarizeAllBtn_Click and OutlineAllBtn_Click removed — functionality now in InlineSummarizeBtn_Click / InlineOutlineBtn_Click
 
     private async void SummarizeBatchBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -1746,8 +1721,8 @@ public partial class MainWindow : Window
             }
         }
 
-        SummarizeAllBtn.IsEnabled = false;
-        OutlineAllBtn.IsEnabled = false;
+        InlineSummarizeBtn.IsEnabled = false;
+        InlineOutlineBtn.IsEnabled = false;
         SummarizeBatchBtn.IsEnabled = false;
         OutlineBatchBtn.IsEnabled = false;
         CancelAnalysisBtn.IsEnabled = true;
@@ -1762,15 +1737,15 @@ public partial class MainWindow : Window
         {
             var t = _allTranscripts[i];
             AnalysisStatusLabel.Text = $"[{i + 1}/{total}] {analyzeType}: {t.FileName}";
-            AnalysisProgress.Value = (double)(i) / total * 100;
+            // AnalysisProgress removed  no separate progress bar
 
             if (_batchCancelled) break;
 
             // Check if output already exists
             var outputPath = Path.ChangeExtension(t.FullPath, null) + $"_{analyzeType}.txt";
             bool shouldSkip = analyzeType == "summarize"
-                ? SkipExistingSummaryCheck.IsChecked == true
-                : SkipExistingOutlineCheck.IsChecked == true;
+                ? true
+                : true;
             if (shouldSkip && File.Exists(outputPath))
             {
                 skipped++;
@@ -1779,9 +1754,9 @@ public partial class MainWindow : Window
             }
 
             // Select the file in Analysis list to show progress
-            var items = AnalysisTranscriptList.ItemsSource as IEnumerable<AnalysisFileInfo>;
+            var items = TranscriptList.ItemsSource as IEnumerable<TranscriptFileInfo>;
             var match = items?.FirstOrDefault(a => a.FullPath.Equals(t.FullPath, StringComparison.OrdinalIgnoreCase));
-            if (match != null) AnalysisTranscriptList.SelectedItem = match;
+            if (match != null) TranscriptList.SelectedItem = match;
 
             try
             {
@@ -1798,11 +1773,11 @@ public partial class MainWindow : Window
             }
         }
 
-        AnalysisProgress.Value = 100;
+        // AnalysisProgress removed
         var skipMsg = skipped > 0 ? $", {skipped} skipped" : "";
         AnalysisStatusLabel.Text = $"Batch {analyzeType} complete ({total} files{skipMsg})";
-        SummarizeAllBtn.IsEnabled = true;
-        OutlineAllBtn.IsEnabled = true;
+        InlineSummarizeBtn.IsEnabled = true;
+        InlineOutlineBtn.IsEnabled = true;
         SummarizeBatchBtn.IsEnabled = true;
         OutlineBatchBtn.IsEnabled = true;
         CancelAnalysisBtn.IsEnabled = false;
@@ -1810,7 +1785,7 @@ public partial class MainWindow : Window
 
     private async Task RunAnalysisOnSelected(string analyzeType)
     {
-        if (AnalysisTranscriptList.SelectedItem is not AnalysisFileInfo info)
+        if (TranscriptList.SelectedItem is not TranscriptFileInfo info)
         {
             AnalysisStatusLabel.Text = "Select a transcript first";
             return;
@@ -1838,8 +1813,8 @@ public partial class MainWindow : Window
 
         AnalysisStatusLabel.Text = $"Running {analyzeType} with {provider}...";
         AnalysisOutputBox.Text = "Processing...";
-        SummarizeAllBtn.IsEnabled = false;
-        OutlineAllBtn.IsEnabled = false;
+        InlineSummarizeBtn.IsEnabled = false;
+        InlineOutlineBtn.IsEnabled = false;
         CancelAnalysisBtn.IsEnabled = true;
 
         try
@@ -1852,8 +1827,8 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SummarizeAllBtn.IsEnabled = true;
-            OutlineAllBtn.IsEnabled = true;
+            InlineSummarizeBtn.IsEnabled = true;
+            InlineOutlineBtn.IsEnabled = true;
             CancelAnalysisBtn.IsEnabled = false;
         }
     }
@@ -1865,13 +1840,8 @@ public partial class MainWindow : Window
         AnalysisStatusLabel.Text = "Cancelled";
     }
 
-    private void AnalysisTranscriptList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (AnalysisTranscriptList.SelectedItem is AnalysisFileInfo info)
-        {
-            AnalysisStatusLabel.Text = $"Selected: {info.FileName}";
-        }
-    }
+    // AnalysisTranscriptList_SelectionChanged removed — Analysis tab merged into Transcribe tab.
+    // TranscriptList_SelectionChanged (above) handles all selection logic now.
 
     // ===== TRANSCRIPT CONTEXT MENU =====
 
@@ -1887,21 +1857,7 @@ public partial class MainWindow : Window
             await RunAnalysisOnTranscript(info.FullPath, "outline");
     }
 
-    private void ContextOpenAnalysis_Click(object sender, RoutedEventArgs e)
-    {
-        if (TranscriptList.SelectedItem is not TranscriptFileInfo info) return;
-
-        // Switch to Analysis tab (index 4: Transcribe=0, Settings=1, Log=2, Search=3, Analysis=4)
-        MainTabControl.SelectedIndex = 4;
-
-        // Select matching file in AnalysisTranscriptList
-        var items = AnalysisTranscriptList.ItemsSource as IEnumerable<AnalysisFileInfo>;
-        if (items != null)
-        {
-            var match = items.FirstOrDefault(a => a.FullPath.Equals(info.FullPath, StringComparison.OrdinalIgnoreCase));
-            if (match != null) AnalysisTranscriptList.SelectedItem = match;
-        }
-    }
+    // ContextOpenAnalysis_Click removed — Analysis tab merged into Transcribe tab
 
     private void ContextOpenMediaPlayer_Click(object sender, RoutedEventArgs e)
     {
@@ -1926,15 +1882,43 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void InlineSummarizeBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+            await RunAnalysisOnTranscript(info.FullPath, "summarize");
+    }
+
+    private async void InlineOutlineBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+            await RunAnalysisOnTranscript(info.FullPath, "outline");
+    }
+
+    private void VersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (VersionCombo.SelectedItem is ComboBoxItem item && item.Tag is string versionPath)
+        {
+            try
+            {
+                AnalysisOutputBox.Text = File.ReadAllText(versionPath);
+                AnalysisStatusLabel.Text = $"Viewing: {Path.GetFileName(versionPath)}";
+            }
+            catch (Exception ex)
+            {
+                AnalysisOutputBox.Text = $"Error reading file: {ex.Message}";
+            }
+        }
+    }
+
     private async void AnalysisContextSummarize_Click(object sender, RoutedEventArgs e)
     {
-        if (AnalysisTranscriptList.SelectedItem is AnalysisFileInfo info)
+        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
             await RunAnalysisOnTranscript(info.FullPath, "summarize");
     }
 
     private async void AnalysisContextOutline_Click(object sender, RoutedEventArgs e)
     {
-        if (AnalysisTranscriptList.SelectedItem is AnalysisFileInfo info)
+        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
             await RunAnalysisOnTranscript(info.FullPath, "outline");
     }
 
@@ -1956,21 +1940,14 @@ public partial class MainWindow : Window
             }
         }
 
-        // Stay on Analysis tab to show progress
-        MainTabControl.SelectedIndex = 1;
+        // Stay on Transcribe tab (index 0) to show progress
 
-        // Select the file in the Analysis transcript list
-        var items = AnalysisTranscriptList.ItemsSource as IEnumerable<AnalysisFileInfo>;
-        if (items != null)
-        {
-            var match = items.FirstOrDefault(a => a.FullPath.Equals(transcriptPath, StringComparison.OrdinalIgnoreCase));
-            if (match != null) AnalysisTranscriptList.SelectedItem = match;
-        }
+
 
         AnalysisStatusLabel.Text = $"Running {analyzeType} with {provider}...";
         AnalysisOutputBox.Text = "Processing...";
-        SummarizeAllBtn.IsEnabled = false;
-        OutlineAllBtn.IsEnabled = false;
+        InlineSummarizeBtn.IsEnabled = false;
+        InlineOutlineBtn.IsEnabled = false;
         CancelAnalysisBtn.IsEnabled = true;
 
         try
@@ -1983,11 +1960,289 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SummarizeAllBtn.IsEnabled = true;
-            OutlineAllBtn.IsEnabled = true;
+            InlineSummarizeBtn.IsEnabled = true;
+            InlineOutlineBtn.IsEnabled = true;
             CancelAnalysisBtn.IsEnabled = false;
         }
     }
+
+    // ===== MEDIA PLAYER HANDLERS =====
+
+    private static readonly System.Text.RegularExpressions.Regex _timestampRegex = 
+        new(@"^\[?(\d{1,2}):?(\d{2}):?(\d{2}(?:\.\d+)?)\]?\s*(.*)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private void LoadTranscriptLines(string content)
+    {
+        _currentTranscriptLines.Clear();
+        var lines = content.Split('\n');
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var match = _timestampRegex.Match(line);
+            if (match.Success)
+            {
+                int h = int.Parse(match.Groups[1].Value);
+                int m = int.Parse(match.Groups[2].Value);
+                double s = double.Parse(match.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture);
+                var offset = new TimeSpan(0, h, m, (int)s, (int)((s - (int)s) * 1000));
+                _currentTranscriptLines.Add(new TranscriptLine
+                {
+                    Offset = offset,
+                    TimeLabel = $"[{h}:{m:D2}:{(int)s:D2}]",
+                    Text = match.Groups[4].Value.Trim()
+                });
+            }
+            else
+            {
+                // Non-timestamped line
+                _currentTranscriptLines.Add(new TranscriptLine
+                {
+                    Offset = TimeSpan.Zero,
+                    TimeLabel = "",
+                    Text = line
+                });
+            }
+        }
+        TranscriptLineList.ItemsSource = _currentTranscriptLines;
+    }
+
+    private void DetectTranscriptVersions(TranscriptFileInfo info)
+    {
+        var nameNoExt = Path.GetFileNameWithoutExtension(info.FileName);
+        string[] modelSuffixes = { "_tiny", "_tiny.en", "_base", "_base.en", "_small", "_small.en", "_medium", "_medium.en", "_large", "_large-v1", "_large-v2", "_large-v3", "_turbo" };
+        var baseName = nameNoExt;
+        foreach (var suffix in modelSuffixes.OrderByDescending(s => s.Length))
+        {
+            if (nameNoExt.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                baseName = nameNoExt[..^suffix.Length];
+                break;
+            }
+        }
+
+        var dir = Path.GetDirectoryName(info.FullPath);
+        if (string.IsNullOrEmpty(dir)) return;
+
+        var versions = Directory.GetFiles(dir, $"{baseName}*.txt")
+            .Where(f => !f.EndsWith("_summary.txt") && !f.EndsWith("_outline.txt"))
+            .OrderBy(f => f)
+            .ToList();
+
+        if (versions.Count > 1)
+        {
+            VersionCombo.Items.Clear();
+            foreach (var v in versions)
+            {
+                var vName = Path.GetFileNameWithoutExtension(v);
+                var label = vName.Length > baseName.Length ? vName[baseName.Length..].TrimStart('_', '-') : "default";
+                if (string.IsNullOrEmpty(label)) label = "default";
+                VersionCombo.Items.Add(new ComboBoxItem { Content = label, Tag = v });
+            }
+            for (int i = 0; i < VersionCombo.Items.Count; i++)
+            {
+                if ((VersionCombo.Items[i] as ComboBoxItem)?.Tag?.ToString() == info.FullPath)
+                {
+                    VersionCombo.SelectedIndex = i;
+                    break;
+                }
+            }
+            InlineVersionLabel.Text = $"{versions.Count} versions:";
+            VersionCombo.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            InlineVersionLabel.Text = "";
+            VersionCombo.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void LoadMediaForTranscript(string? mediaPath)
+    {
+        if (mediaPath != null && File.Exists(mediaPath))
+        {
+            try
+            {
+                MediaPlayer.Source = new Uri(mediaPath);
+                MediaPlayer.Volume = MediaVolumeSlider.Value;
+                MediaPlayerPanel.Visibility = Visibility.Visible;
+                PlayPauseBtn.Content = "▶";
+                _isPlayerPlaying = false;
+
+                // Initialize player timer for sync
+                if (_playerTimer == null)
+                {
+                    _playerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+                    _playerTimer.Tick += PlayerTimer_Tick;
+                }
+            }
+            catch
+            {
+                MediaPlayerPanel.Visibility = Visibility.Collapsed;
+            }
+        }
+        else
+        {
+            MediaPlayerPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void PlayPauseBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isPlayerPlaying)
+        {
+            MediaPlayer.Pause();
+            _playerTimer?.Stop();
+            PlayPauseBtn.Content = "▶";
+            _isPlayerPlaying = false;
+        }
+        else
+        {
+            MediaPlayer.Play();
+            _playerTimer?.Start();
+            PlayPauseBtn.Content = "⏸";
+            _isPlayerPlaying = true;
+        }
+    }
+
+    private void StopBtn_Click(object sender, RoutedEventArgs e)
+    {
+        MediaPlayer.Stop();
+        _playerTimer?.Stop();
+        PlayPauseBtn.Content = "▶";
+        _isPlayerPlaying = false;
+        MediaSeekSlider.Value = 0;
+        MediaTimeLabel.Text = "0:00 / 0:00";
+    }
+
+    private void MediaPlayer_MediaOpened(object sender, RoutedEventArgs e)
+    {
+        if (MediaPlayer.NaturalDuration.HasTimeSpan)
+        {
+            var dur = MediaPlayer.NaturalDuration.TimeSpan;
+            MediaSeekSlider.Maximum = dur.TotalSeconds;
+            MediaTimeLabel.Text = $"0:00 / {(int)dur.TotalMinutes}:{dur.Seconds:D2}";
+        }
+    }
+
+    private void MediaPlayer_MediaEnded(object sender, RoutedEventArgs e)
+    {
+        MediaPlayer.Stop();
+        _playerTimer?.Stop();
+        PlayPauseBtn.Content = "▶";
+        _isPlayerPlaying = false;
+        MediaSeekSlider.Value = 0;
+    }
+
+    private void MediaSeekSlider_DragStarted(object sender, System.Windows.Controls.Primitives.DragStartedEventArgs e)
+    {
+        _isSeeking = true;
+    }
+
+    private void MediaSeekSlider_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        _isSeeking = false;
+        MediaPlayer.Position = TimeSpan.FromSeconds(MediaSeekSlider.Value);
+    }
+
+    private void MediaVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (MediaPlayer != null)
+            MediaPlayer.Volume = e.NewValue;
+    }
+
+    private void PlayerTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_isSeeking || !_isPlayerPlaying) return;
+        var pos = MediaPlayer.Position;
+        MediaSeekSlider.Value = pos.TotalSeconds;
+
+        if (MediaPlayer.NaturalDuration.HasTimeSpan)
+        {
+            var dur = MediaPlayer.NaturalDuration.TimeSpan;
+            MediaTimeLabel.Text = $"{(int)pos.TotalMinutes}:{pos.Seconds:D2} / {(int)dur.TotalMinutes}:{dur.Seconds:D2}";
+        }
+
+        // Bidirectional sync: highlight the current transcript line
+        if (_currentTranscriptLines.Count > 0)
+        {
+            TranscriptLine? best = null;
+            foreach (var tl in _currentTranscriptLines)
+            {
+                if (tl.Offset <= pos && tl.Offset != TimeSpan.Zero)
+                    best = tl;
+            }
+            if (best != null && TranscriptLineList.SelectedItem != best)
+            {
+                _isSeeking = true; // prevent re-entrant seek
+                TranscriptLineList.SelectedItem = best;
+                TranscriptLineList.ScrollIntoView(best);
+                _isSeeking = false;
+            }
+        }
+    }
+
+    private void TranscriptLineList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isSeeking) return; // Avoid re-entrant loop from timer
+        if (TranscriptLineList.SelectedItem is TranscriptLine line && line.Offset != TimeSpan.Zero)
+        {
+            MediaPlayer.Position = line.Offset;
+            if (!_isPlayerPlaying)
+            {
+                MediaPlayer.Play();
+                _playerTimer?.Start();
+                PlayPauseBtn.Content = "⏸";
+                _isPlayerPlaying = true;
+            }
+        }
+    }
+
+    private void SaveAnalysisBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(AnalysisOutputBox.Text) || _selectedTranscriptPath == null) return;
+        var dir = Path.GetDirectoryName(_selectedTranscriptPath);
+        var baseName = Path.GetFileNameWithoutExtension(_selectedTranscriptPath);
+        var savePath = Path.Combine(dir ?? ".", $"{baseName}_analysis.txt");
+        try
+        {
+            File.WriteAllText(savePath, AnalysisOutputBox.Text);
+            SaveAnalysisBtn.IsEnabled = false;
+            AnalysisStatusLabel.Text = $"Saved to {Path.GetFileName(savePath)}";
+            StatusBar.Text = $"Analysis saved to {savePath}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to save: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void InlineEnglishOnlyCheck_Click(object sender, RoutedEventArgs e)
+    {
+        bool englishOnly = InlineEnglishOnlyCheck.IsChecked ?? false;
+        foreach (ComboBoxItem item in ModelSelector.Items)
+        {
+            var tag = item.Tag?.ToString() ?? "";
+            bool isEnglish = tag.EndsWith(".en");
+            item.Visibility = (englishOnly && !isEnglish) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        // Ensure a visible item is selected
+        if (ModelSelector.SelectedItem is ComboBoxItem sel && sel.Visibility == Visibility.Collapsed)
+        {
+            var first = ModelSelector.Items.OfType<ComboBoxItem>().FirstOrDefault(i => i.Visibility == Visibility.Visible);
+            if (first != null) ModelSelector.SelectedItem = first;
+        }
+    }
+}
+
+// ===== TRANSCRIPT LINE MODEL (for clickable lines) =====
+
+public class TranscriptLine
+{
+    public TimeSpan Offset { get; set; }
+    public string TimeLabel { get; set; } = "";
+    public string Text { get; set; } = "";
 }
 
 // ===== SEARCH RESULT MODEL =====
@@ -2009,5 +2264,6 @@ public class AnalysisFileInfo
     public string FullPath { get; set; } = "";
     public string SummaryPreview { get; set; } = "Not analyzed yet";
     public string FullSummary { get; set; } = "";
+    /// <summary>Base media file name (without model suffix) for grouping versions.</summary>
+    public string MediaName { get; set; } = "";
 }
-

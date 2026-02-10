@@ -2,7 +2,7 @@
 
 **Transcribe entire drives of audio and video — locally, privately, and for free.**
 
-TurboScribe is a GPU-accelerated desktop app that uses **Whisper Large-v3** to transcribe meetings, interviews, voice memos, and lectures entirely on your machine. No cloud. No subscriptions. No data ever leaves your computer.
+TurboScribe is a GPU-accelerated desktop app that uses **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — a CTranslate2-powered engine that runs **up to 4x faster** than standard Whisper — to transcribe meetings, interviews, voice memos, and lectures entirely on your machine. Choose from multiple Whisper models (tiny, base, small, medium, large-v3, turbo) depending on your speed/accuracy needs. No cloud. No subscriptions. No data ever leaves your computer.
 
 > 🌟 **Exceptional Noise Handling** — Works great with noisy outdoor recordings: car traffic, wind, lawn mowers, barking dogs.
 
@@ -30,10 +30,10 @@ Extract the zip → run `TurboScribe.exe` → done.
 |---|---|
 | 🔒 **100% Private** | All processing stays on your machine. Nothing is uploaded anywhere. |
 | 💾 **Drive Selector** | Check entire drives (local, USB, network) and transcribe everything at once. |
-| ⚡ **10x Faster** | GPU-accelerated via [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and CTranslate2. |
+| ⚡ **Up to 4x Faster** | GPU-accelerated via [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and CTranslate2 — way faster than standard Whisper. |
+| 🎛️ **Multiple Models** | Choose from tiny, base, small, medium, large-v3, or turbo. Re-transcribe and compare versions side-by-side. |
 | 🔎 **Search Everything** | Keyword search + semantic search across all your transcripts. |
-| 📝 **AI Summaries** | Right-click any transcript → Summarize or Outline using local or cloud LLMs. |
-| 🗑️ **Manage Transcripts** | Sort, filter, compare versions, delete — all from the UI. |
+| 📝 **AI Summaries** | Summarize or outline any transcript — inline in the Analysis tab, or via right-click. Local or cloud LLMs. |
 | 🆓 **Free & Open Source** | No limits, no subscriptions, fully auditable code. |
 
 ---
@@ -60,7 +60,7 @@ dotnet run --project LongAudioApp
 
 | Component | Technology |
 |---|---|
-| Transcription | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper Large-v3, CUDA) |
+| Transcription | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (tiny → large-v3, turbo, CUDA) |
 | Voice Detection | Silero VAD |
 | Semantic Search | sentence-transformers |
 | AI Analysis | Local (Phi-3, LLaMA) or Cloud (Gemini, OpenAI, Claude) |

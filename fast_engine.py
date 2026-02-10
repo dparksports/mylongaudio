@@ -727,7 +727,7 @@ def _analyze_local(prompt, model_name=None):
         llm = Llama(
             model_path=model_path,
             n_ctx=4096,
-            n_gpu_layers=-1,  # Use GPU if available
+            n_gpu_layers=0,  # Force CPU — GPU may be in use by faster-whisper
             verbose=False
         )
         output = llm(
