@@ -219,7 +219,7 @@ public class PythonRunner : IDisposable
         }
     }
 
-    public async Task RunBatchScanAsync(string directory, bool useVad, string? reportPath = null)
+    public async Task RunBatchScanAsync(string directory, bool useVad, string? reportPath = null, string? model = null, bool skipExisting = false)
     {
         // Strip trailing backslash to prevent it escaping the closing quote on the command line
         var safeDir = directory.TrimEnd('\\', '/');
@@ -233,7 +233,9 @@ public class PythonRunner : IDisposable
                 action = "scan", 
                 directory = safeDir, 
                 use_vad = useVad, 
-                report_path = reportPath 
+                report_path = reportPath,
+                model = model,
+                skip_existing = skipExisting
             }, "scan");
         }
         else
@@ -241,21 +243,49 @@ public class PythonRunner : IDisposable
             var cmdArgs = $"--dir \"{safeDir}\"";
             if (reportPath != null) cmdArgs += $" --report \"{reportPath}\"";
             if (!useVad) cmdArgs += " --no-vad";
+            if (model != null) cmdArgs += $" --model {model}";
+            if (skipExisting) cmdArgs += " --skip-existing";
             
             await RunProcessAsync(BuildArgs("batch_scan", cmdArgs));
         }
     }
 
-    public async Task RunBatchTranscribeAsync(string? reportPath = null, bool skipExisting = false)
+    public async Task RunVadScanAsync(string directory, double vadThreshold = 0.5, string? reportPath = null, bool skipExisting = false)
+    {
+        var safeDir = directory.TrimEnd('\\', '/');
+        if (safeDir.Length == 2 && safeDir[1] == ':') safeDir += "\\"; // Keep drive root as C:\
+        
+        if (IsServerRunning)
+        {
+            await SendCommandAndWaitAsync(new 
+            { 
+                action = "vad_scan", 
+                directory = safeDir, 
+                vad_threshold = vadThreshold,
+                report_path = reportPath,
+                skip_existing = skipExisting
+            }, "vad_scan");
+        }
+        else
+        {
+            var cmdArgs = $"--dir \"{safeDir}\" --vad-threshold {vadThreshold}";
+            if (reportPath != null) cmdArgs += $" --report \"{reportPath}\"";
+            if (skipExisting) cmdArgs += " --skip-existing";
+            
+            await RunProcessAsync(BuildArgs("vad_scan", cmdArgs));
+        }
+    }
+
+    public async Task RunBatchTranscribeAsync(string model, string? reportPath = null, bool skipExisting = false)
     {
         // Server mode not implemented for this action yet
-        var cmdArgs = $"--output-dir \"{TranscriptDirectory}\"";
+        var cmdArgs = $"--output-dir \"{TranscriptDirectory}\" --model {model}";
         if (reportPath != null) cmdArgs += $" --report \"{reportPath}\"";
         if (skipExisting) cmdArgs += " --skip-existing";
         await RunProcessAsync(BuildArgs("batch_transcribe", cmdArgs));
     }
 
-    public async Task RunBatchTranscribeDirAsync(string directory, bool useVad, bool skipExisting)
+    public async Task RunBatchTranscribeDirAsync(string directory, bool useVad, bool skipExisting, string model = "large-v1")
     {
         var safeDir = directory.TrimEnd('\\', '/');
         if (safeDir.EndsWith("\\")) safeDir = safeDir.TrimEnd('\\');
@@ -264,7 +294,7 @@ public class PythonRunner : IDisposable
         // Checked fast_engine.py, I haven't added "batch_transcribe_dir" to server mode.
         // So fallback to legacy always.
         
-        var cmdArgs = $"--dir \"{safeDir}\" --output-dir \"{TranscriptDirectory}\"";
+        var cmdArgs = $"--dir \"{safeDir}\" --output-dir \"{TranscriptDirectory}\" --model {model}";
         if (!useVad) cmdArgs += " --no-vad";
         if (skipExisting) cmdArgs += " --skip-existing";
         await RunProcessAsync(BuildArgs("batch_transcribe_dir", cmdArgs));

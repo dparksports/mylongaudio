@@ -8,6 +8,7 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using System.ComponentModel;
 
 namespace LongAudioApp;
 
@@ -91,6 +92,45 @@ public class TranscriptFileInfo
     }
 }
 
+// Model for the media-centric file list
+public class MediaFileInfo
+{
+    public string FullPath { get; set; } = "";
+    public string FileName => Path.GetFileName(FullPath);
+    public string BaseName => Path.GetFileNameWithoutExtension(FullPath);
+    public bool HasVoice { get; set; }
+    public bool HasTranscript { get; set; }
+    public List<string> TranscriptModels { get; set; } = new();
+    public string ModelBadges => string.Join(", ", TranscriptModels);
+    public double DurationSec { get; set; }
+    public double VoiceDurationSec { get; set; }
+    public int TranscriptLength { get; set; }
+    public string TranscriptLengthLabel => TranscriptLength > 0 ? (TranscriptLength >= 1000 ? $"{TranscriptLength / 1000.0:F1}k" : $"{TranscriptLength}") : "—";
+    public string VoiceDurationLabel => VoiceDurationSec > 0 ? (VoiceDurationSec >= 60 ? $"{VoiceDurationSec / 60:F1}m" : $"{VoiceDurationSec:F0}s") : "—";
+    public string VoiceIcon => HasVoice ? "✅" : "—";
+    public string TranscribedIcon => HasTranscript ? "✅" : "—";
+    /// <summary>Best transcript path for this media file (latest/largest)</summary>
+    public string? BestTranscriptPath { get; set; }
+    public DateTime LastModified { get; set; }
+
+    // Per-model-variant icons for individual columns
+    public bool HasModel(string name) =>
+        TranscriptModels.Any(m => m.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    public string MediumEnIcon => HasModel("medium.en") ? "✅" : "";
+    public string SmallEnIcon => HasModel("small.en") ? "✅" : "";
+    public string LargeV1Icon => HasModel("large-v1") ? "✅" : "";
+    public string LargeV2Icon => HasModel("large-v2") ? "✅" : "";
+    public string LargeV3Icon => HasModel("large-v3") ? "✅" : "";
+    public string TurboIcon => HasModel("turbo") ? "✅" : "";
+    public string MediumIcon => HasModel("medium") ? "✅" : "";
+    public string SmallIcon => HasModel("small") ? "✅" : "";
+    public string BaseEnIcon => HasModel("base.en") ? "✅" : "";
+    public string BaseIcon => HasModel("base") ? "✅" : "";
+    public string TinyEnIcon => HasModel("tiny.en") ? "✅" : "";
+    public string TinyIcon => HasModel("tiny") ? "✅" : "";
+}
+
 public partial class MainWindow : Window
 {
     private PythonRunner _runner;
@@ -103,6 +143,8 @@ public partial class MainWindow : Window
     private bool _isSeeking;
     private bool _isPlayerPlaying;
     private List<TranscriptLine> _currentTranscriptLines = new();
+    private bool _gpuHardwareAvailable;
+    private bool _cudaPytorchReady;
 
     protected override void OnClosed(EventArgs e)
     {
@@ -171,6 +213,14 @@ public partial class MainWindow : Window
         SkipExistingCheck.IsChecked = _appSettings.SkipExistingFiles;
         EnglishOnlyCheck.IsChecked = _appSettings.EnglishOnly;
         ApplyEnglishOnlyFilter();
+        foreach (ComboBoxItem item in VadSensitivityCombo.Items)
+        {
+            if (item.Tag?.ToString() == _appSettings.VadSensitivity.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            {
+                item.IsSelected = true;
+                break;
+            }
+        }
         
         foreach (ComboBoxItem item in DeviceCombo.Items)
         {
@@ -182,11 +232,67 @@ public partial class MainWindow : Window
         }
         _runner.DevicePreference = _appSettings.DevicePreference;
 
+        // Restore Whisper model selection
+        foreach (ComboBoxItem item in WhisperModelCombo.Items)
+        {
+            if (item.Tag?.ToString() == _appSettings.WhisperModel)
+            {
+                WhisperModelCombo.SelectedItem = item;
+                break;
+            }
+        }
+
+        // Restore window position/size
+        RestoreWindowPosition();
+        Closing += MainWindow_Closing;
+
         // Populate drive list
         RefreshDrives();
 
         // Defer heavy I/O and subprocess work until after window renders
         ContentRendered += OnContentRendered;
+    }
+
+    private void RestoreWindowPosition()
+    {
+        if (_appSettings.WindowWidth > 0 && _appSettings.WindowHeight > 0)
+        {
+            Width = _appSettings.WindowWidth;
+            Height = _appSettings.WindowHeight;
+        }
+        if (!double.IsNaN(_appSettings.WindowLeft) && !double.IsNaN(_appSettings.WindowTop))
+        {
+            // Simple bounds check using virtual screen dimensions
+            var left = _appSettings.WindowLeft;
+            var top = _appSettings.WindowTop;
+            var virtualLeft = SystemParameters.VirtualScreenLeft;
+            var virtualTop = SystemParameters.VirtualScreenTop;
+            var virtualWidth = SystemParameters.VirtualScreenWidth;
+            var virtualHeight = SystemParameters.VirtualScreenHeight;
+
+            if (left >= virtualLeft - 50 && left < virtualLeft + virtualWidth &&
+                top >= virtualTop - 50 && top < virtualTop + virtualHeight)
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual;
+                Left = left;
+                Top = top;
+            }
+        }
+        if (_appSettings.WindowMaximized)
+            WindowState = WindowState.Maximized;
+    }
+
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        _appSettings.WindowMaximized = WindowState == WindowState.Maximized;
+        if (WindowState == WindowState.Normal)
+        {
+            _appSettings.WindowWidth = Width;
+            _appSettings.WindowHeight = Height;
+            _appSettings.WindowLeft = Left;
+            _appSettings.WindowTop = Top;
+        }
+        SaveAppSettings();
     }
 
     private void OnContentRendered(object? sender, EventArgs e)
@@ -198,6 +304,9 @@ public partial class MainWindow : Window
 
         // GPU detection (spawns nvidia-smi subprocess)
         DetectGpu();
+
+        // Check if CUDA PyTorch is installed (one-time)
+        _ = CheckCudaPytorchAsync();
 
         // Load existing scan results + refresh transcript lists (disk I/O + directory scans)
         TryLoadExistingResults();
@@ -569,11 +678,20 @@ public partial class MainWindow : Window
         public bool StartEngineOnLaunch { get; set; } = false;
         public bool SkipExistingFiles { get; set; } = false;
         public string DevicePreference { get; set; } = "cuda"; // "auto", "cuda", or "cpu"
+        public bool TurboModeEnabled { get; set; } = true;
         public bool EnglishOnly { get; set; } = false;
         public bool NoVadEnabled { get; set; } = true;
         public string LastDirectory { get; set; } = "";
         public List<string> SelectedDrives { get; set; } = new();
         public List<string> CustomFolders { get; set; } = new();
+        public string WhisperModel { get; set; } = "large-v1";
+        // Window position/size persistence
+        public double WindowWidth { get; set; } = 0;
+        public double WindowHeight { get; set; } = 0;
+        public double WindowLeft { get; set; } = double.NaN;
+        public double WindowTop { get; set; } = double.NaN;
+        public bool WindowMaximized { get; set; } = false;
+        public double VadSensitivity { get; set; } = 0.5; // 0.0-1.0, lower = more sensitive
     }
 
     private void GpuRefreshCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -583,6 +701,15 @@ public partial class MainWindow : Window
             _appSettings.GpuRefreshIntervalSeconds = seconds;
             SaveAppSettings();
             UpdateGpuTimer();
+        }
+    }
+
+    private void VadSensitivityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (VadSensitivityCombo?.SelectedItem is ComboBoxItem item && double.TryParse(item.Tag?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out double threshold))
+        {
+            _appSettings.VadSensitivity = threshold;
+            SaveAppSettings();
         }
     }
 
@@ -641,35 +768,10 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrEmpty(path)) _silentFiles.Add(path);
             }
 
-            // When a transcript file is saved, add it to the list immediately
+            // When a transcript file is saved, refresh the media file list
             if (line.Contains("[SAVED]"))
             {
-                var path = line.Replace("[SAVED]", "").Trim();
-                if (File.Exists(path))
-                {
-                    var current = TranscriptList.ItemsSource as List<TranscriptFileInfo> ?? new List<TranscriptFileInfo>();
-                    // If it already exists (re-transcribe), update its size
-                    var existing = current.FirstOrDefault(t => t.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
-                    if (existing != null)
-                    {
-                        existing.ReadSize();
-                        TranscriptList.ItemsSource = current.OrderByDescending(t => t.CharCount).ToList();
-                        // Auto-select the updated transcript
-                        TranscriptList.SelectedItem = TranscriptList.Items.Cast<TranscriptFileInfo>()
-                            .FirstOrDefault(t => t.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
-                    }
-                    else
-                    {
-                        var info = new TranscriptFileInfo { FullPath = path };
-                        info.ReadSize();
-                        current.Add(info);
-                        var sorted = current.OrderByDescending(t => t.CharCount).ToList();
-                        TranscriptList.ItemsSource = sorted;
-                        TranscribeStatusLabel.Text = $"Found {sorted.Count} transcript files (Silent: {_silentCount})";
-                        // Auto-select the new transcript
-                        TranscriptList.SelectedItem = sorted.FirstOrDefault(t => t.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
-                    }
-                }
+                RefreshMediaFileList();
             }
 
             // Parse semantic search results
@@ -739,8 +841,9 @@ public partial class MainWindow : Window
         _runner.RunningChanged += running => Dispatcher.BeginInvoke(() =>
         {
             TranscribeAllBtn.IsEnabled = !running;
+            FindMeetingsBtn.IsEnabled = !running;
             BrowseBtn.IsEnabled = !running;
-            ViewSilentBtn.IsEnabled = !running && _silentFiles.Count > 0;
+
             CancelTranscribeBtn.IsEnabled = running;
 
             if (!running)
@@ -755,13 +858,14 @@ public partial class MainWindow : Window
                 {
                     TranscribeStatusLabel.Text = $"Transcription complete. ({_silentCount} silent files)";
                     StatusBar.Text = $"Transcription complete. ({_silentCount} silent files)";
-                    RefreshTranscriptList();
+                    RefreshMediaFileList();
                 }
             }
         });
     }
 
     private bool _isScanRunning;
+    private List<MediaFileInfo> _allMediaFiles = new();
     private List<TranscriptFileInfo> _allTranscripts = new();
     private volatile bool _batchCancelled;
 
@@ -774,8 +878,6 @@ public partial class MainWindow : Window
 
         try
         {
-            // Query for name, utilization, and memory usage
-            // output format: "NVIDIA GeForce RTX 4090, 15 %, 300 MiB / 24564 MiB"
             var psi = new ProcessStartInfo("nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits")
             {
                 UseShellExecute = false,
@@ -785,18 +887,19 @@ public partial class MainWindow : Window
             var proc = Process.Start(psi);
             if (proc != null)
             {
-                // Reading all lines in case of multiple GPUs, taking the first one for now
                 var output = await proc.StandardOutput.ReadToEndAsync();
                 await proc.WaitForExitAsync();
 
                 if (string.IsNullOrWhiteSpace(output))
                 {
+                    _gpuHardwareAvailable = false;
                     GpuLabel.Text = "GPU: Not available (using CPU)";
-                    GpuLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8")); // Dim
+                    GpuLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+                    UpdateTurboStatus();
                     return;
                 }
 
-                // Parse first line: "Name, Util, MemUsed, MemTotal"
+                _gpuHardwareAvailable = true;
                 var parts = output.Split('\n')[0].Split(',');
                 if (parts.Length >= 4)
                 {
@@ -804,24 +907,141 @@ public partial class MainWindow : Window
                     var util = parts[1].Trim();
                     var memUsed = parts[2].Trim();
                     var memTotal = parts[3].Trim();
-
                     GpuLabel.Text = $"GPU: {name} | Load: {util}% | VRAM: {memUsed}/{memTotal} MiB";
-                    GpuLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#22C55E")); // Green
+                    GpuLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#22C55E"));
                 }
                 else
                 {
                     GpuLabel.Text = $"GPU: {parts[0].Trim()}";
                 }
+                UpdateTurboStatus();
             }
         }
         catch
         {
+            _gpuHardwareAvailable = false;
             GpuLabel.Text = "GPU: Not detected (using CPU)";
             GpuLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+            UpdateTurboStatus();
         }
         finally
         {
             _isCheckingGpu = false;
+        }
+    }
+
+    private async Task CheckCudaPytorchAsync()
+    {
+        try
+        {
+            // Find venv python
+            var venvPython = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fast_engine_venv", "Scripts", "python.exe");
+            if (!File.Exists(venvPython))
+            {
+                _cudaPytorchReady = false;
+                UpdateTurboStatus();
+                return;
+            }
+
+            var psi = new ProcessStartInfo(venvPython, "-c \"import torch; print(torch.cuda.is_available())\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            var proc = Process.Start(psi);
+            if (proc != null)
+            {
+                var output = await proc.StandardOutput.ReadToEndAsync();
+                await proc.WaitForExitAsync();
+                _cudaPytorchReady = output.Trim().Equals("True", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch
+        {
+            _cudaPytorchReady = false;
+        }
+        Dispatcher.Invoke(UpdateTurboStatus);
+    }
+
+    private void UpdateTurboStatus()
+    {
+        if (!_gpuHardwareAvailable)
+        {
+            TurboModeCheck.IsChecked = false;
+            TurboModeCheck.IsEnabled = false;
+            TurboStatusLabel.Text = "❌ No GPU detected";
+            TurboStatusLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+            _runner.DevicePreference = "cpu";
+        }
+        else if (!_cudaPytorchReady)
+        {
+            TurboModeCheck.IsChecked = false;
+            TurboModeCheck.IsEnabled = true;
+            TurboStatusLabel.Text = "⚠ GPU available — install AI libraries to enable";
+            TurboStatusLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EAB308"));
+            _runner.DevicePreference = "cpu";
+        }
+        else
+        {
+            TurboModeCheck.IsEnabled = true;
+            TurboModeCheck.IsChecked = _appSettings.TurboModeEnabled;
+            TurboStatusLabel.Text = _appSettings.TurboModeEnabled ? "✅ GPU Active" : "CPU mode";
+            TurboStatusLabel.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(
+                _appSettings.TurboModeEnabled ? "#22C55E" : "#94A3B8"));
+            _runner.DevicePreference = _appSettings.TurboModeEnabled ? "cuda" : "cpu";
+        }
+    }
+
+    private async void TurboModeCheck_Click(object sender, RoutedEventArgs e)
+    {
+        var isChecked = TurboModeCheck.IsChecked == true;
+
+        if (isChecked && !_cudaPytorchReady)
+        {
+            // Prompt to install
+            var result = MessageBox.Show(
+                "CUDA-enabled AI libraries are not installed. Would you like to install them now?\n\n" +
+                "This will download and install PyTorch with CUDA support (~2 GB).\n" +
+                "An internet connection is required.",
+                "Install AI Libraries",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (result == MessageBoxResult.Yes)
+            {
+                // Switch to Log tab and trigger install
+                var logTab = MainTabControl.Items.Cast<System.Windows.Controls.TabItem>()
+                    .FirstOrDefault(t => t.Header?.ToString()?.Contains("Log") == true);
+                if (logTab != null) logTab.IsSelected = true;
+
+                InstallLibsBtn_Click(sender, e);
+
+                // After install completes, re-check CUDA
+                await CheckCudaPytorchAsync();
+            }
+            else
+            {
+                TurboModeCheck.IsChecked = false;
+            }
+            return;
+        }
+
+        _appSettings.TurboModeEnabled = isChecked;
+        _runner.DevicePreference = isChecked ? "cuda" : "cpu";
+        _appSettings.DevicePreference = isChecked ? "cuda" : "cpu";
+        SaveAppSettings();
+        UpdateTurboStatus();
+
+        // Sync DeviceCombo in Settings
+        foreach (ComboBoxItem item in DeviceCombo.Items)
+        {
+            if (item.Tag?.ToString() == (isChecked ? "cuda" : "cpu"))
+            {
+                DeviceCombo.SelectedItem = item;
+                break;
+            }
         }
     }
 
@@ -839,8 +1059,8 @@ public partial class MainWindow : Window
                 var blockCount = _report.Results.Where(r => r.Error == null).Sum(r => r.Blocks.Count);
                 TranscribeCountLabel.Text = $"{voiceCount} files with voice ({blockCount} blocks)";
                 StatusBar.Text = $"Loaded scan results from {_report.ScanDate}";
-                // Also refresh transcripts
-                RefreshTranscriptList();
+                // Refresh the media file list
+                RefreshMediaFileList();
             }
         }
         catch (Exception ex)
@@ -849,97 +1069,138 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RefreshTranscriptList()
+    private void RefreshMediaFileList()
     {
-        var transcripts = new List<TranscriptFileInfo>();
+        _allMediaFiles = BuildMediaFileList();
+        ApplyMediaFileView();
 
-        // 1. Search AppData Transcripts directory (primary location for new transcripts)
-        var appDataTranscripts = _runner.TranscriptDirectory;
-        if (Directory.Exists(appDataTranscripts))
+        // Also keep _allTranscripts for analysis batch compatibility
+        _allTranscripts.Clear();
+        foreach (var mf in _allMediaFiles)
         {
+            if (mf.BestTranscriptPath != null)
+            {
+                var ti = new TranscriptFileInfo { FullPath = mf.BestTranscriptPath };
+                ti.ReadSize();
+                _allTranscripts.Add(ti);
+            }
+        }
+
+        TranscribeStatusLabel.Text = _allMediaFiles.Count > 0
+            ? $"Found {_allMediaFiles.Count} media files ({_allMediaFiles.Count(m => m.HasVoice)} with voice, {_allMediaFiles.Count(m => m.HasTranscript)} transcribed)"
+            : "No media files found — set directory and scan";
+    }
+
+    private static readonly string[] ModelSuffixes = { "tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large", "large-v1", "large-v2", "large-v3", "turbo" };
+    private static readonly string[] MediaExtensions = { ".mp4", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm", ".wma", ".m4v", ".3gp", ".ts", ".mpg", ".mpeg" };
+
+    private List<MediaFileInfo> BuildMediaFileList()
+    {
+        var mediaFiles = new Dictionary<string, MediaFileInfo>(StringComparer.OrdinalIgnoreCase);
+        var transcriptDir = _runner.TranscriptDirectory;
+
+        // 1. Add media files from scan report
+        if (_report != null)
+        {
+            foreach (var result in _report.Results)
+            {
+                var mf = new MediaFileInfo
+                {
+                    FullPath = result.File,
+                    HasVoice = result.Error == null && result.Blocks.Count > 0,
+                    DurationSec = result.DurationSec,
+                    VoiceDurationSec = result.SpeechDurationSec > 0 
+                        ? result.SpeechDurationSec 
+                        : result.Blocks.Sum(b => b.End - b.Start),
+                    LastModified = File.Exists(result.File) ? new FileInfo(result.File).LastWriteTime : DateTime.MinValue
+                };
+                mediaFiles[result.File] = mf;
+            }
+        }
+
+        // 2. Scan for transcript files and cross-reference with media files
+        var transcriptFiles = new List<string>();
+
+        // AppData transcripts
+        if (Directory.Exists(transcriptDir))
+        {
+            try { transcriptFiles.AddRange(Directory.GetFiles(transcriptDir, "*_transcript*.txt", SearchOption.TopDirectoryOnly)); }
+            catch { }
+        }
+
+        // Scan ALL selected directories (checked drives + custom folders)
+        var selectedDirs = GetSelectedDirectories();
+        // Also include DirectoryBox.Text as fallback if nothing is selected
+        var dirBoxPath = NormalizePath(DirectoryBox.Text);
+        if (!string.IsNullOrEmpty(dirBoxPath) && Directory.Exists(dirBoxPath)
+            && !selectedDirs.Any(d => d.Equals(dirBoxPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            selectedDirs.Add(dirBoxPath);
+        }
+
+        foreach (var dir in selectedDirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+
+            // Discover transcripts in each selected directory
+            try { transcriptFiles.AddRange(Directory.GetFiles(dir, "*_transcript*.txt", SearchOption.AllDirectories)); }
+            catch { }
+
+            // Discover media files in each selected directory
             try
             {
-                var found = Directory.GetFiles(appDataTranscripts, "*_transcript*.txt", SearchOption.TopDirectoryOnly);
-                foreach (var f in found)
+                foreach (var ext in MediaExtensions)
                 {
-                    var ti = new TranscriptFileInfo { FullPath = f };
-                    ti.ReadSize();
-                    transcripts.Add(ti);
+                    foreach (var f in Directory.GetFiles(dir, $"*{ext}", SearchOption.AllDirectories))
+                    {
+                        if (!mediaFiles.ContainsKey(f))
+                            mediaFiles[f] = new MediaFileInfo { FullPath = f, LastModified = new FileInfo(f).LastWriteTime };
+                    }
                 }
             }
             catch { }
         }
 
-        // 2. Look for legacy _transcript.txt files next to each scanned media file
-        if (_report != null)
+        // 3. Match transcripts to media files
+        foreach (var tf in transcriptFiles.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            foreach (var result in _report.Results)
-            {
-                if (result.Error != null || result.Blocks.Count == 0) continue;
+            var tfName = Path.GetFileNameWithoutExtension(tf);
+            var idx = tfName.IndexOf("_transcript", StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) continue;
 
-                var basePath = Path.ChangeExtension(result.File, null) + "_transcript.txt";
-                if (File.Exists(basePath) && !transcripts.Any(t => t.FullPath.Equals(basePath, StringComparison.OrdinalIgnoreCase)))
+            var mediaBaseName = tfName[..idx];
+            var modelPart = tfName[(idx + "_transcript".Length)..].TrimStart('_');
+            var modelName = string.IsNullOrEmpty(modelPart) ? "default" : modelPart;
+
+            // Find matching media file
+            var matchKey = mediaFiles.Keys.FirstOrDefault(k =>
+                Path.GetFileNameWithoutExtension(k).Equals(mediaBaseName, StringComparison.OrdinalIgnoreCase));
+
+            if (matchKey != null)
+            {
+                var mf = mediaFiles[matchKey];
+                mf.HasTranscript = true;
+                if (!mf.TranscriptModels.Contains(modelName, StringComparer.OrdinalIgnoreCase))
+                    mf.TranscriptModels.Add(modelName);
+
+                // Set best transcript (latest/largest)
+                if (mf.BestTranscriptPath == null || new FileInfo(tf).Length > (File.Exists(mf.BestTranscriptPath) ? new FileInfo(mf.BestTranscriptPath).Length : 0))
                 {
-                    var ti = new TranscriptFileInfo { FullPath = basePath };
-                    ti.ReadSize();
-                    transcripts.Add(ti);
+                    mf.BestTranscriptPath = tf;
+                    try { mf.TranscriptLength = (int)new FileInfo(tf).Length; } catch { }
                 }
             }
         }
 
-        // 3. Also scan the media directory for any _transcript*.txt files (including versioned)
-        var dir = NormalizePath(DirectoryBox.Text);
-        if (Directory.Exists(dir))
-        {
-            try
-            {
-                var found = Directory.GetFiles(dir, "*_transcript*.txt", SearchOption.AllDirectories);
-                foreach (var f in found)
-                {
-                    if (!transcripts.Any(t => t.FullPath.Equals(f, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        var ti = new TranscriptFileInfo { FullPath = f };
-                        ti.ReadSize();
-                        transcripts.Add(ti);
-                    }
-                }
-            }
-            catch { /* Permission errors on some dirs */ }
-        }
-
-        _allTranscripts = transcripts;
-        ApplyTranscriptView();
-
-        TranscribeStatusLabel.Text = transcripts.Count > 0
-            ? $"Found {transcripts.Count} transcript files"
-            : "No transcripts yet — run batch transcribe first";
+        return mediaFiles.Values.ToList();
     }
 
-    private void ApplyTranscriptView()
-    {
-        if (TranscriptList == null) return;
-        var sortTag = (TranscriptSortCombo?.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "date";
-        var filter = TranscriptFilterBox?.Text?.Trim() ?? "";
 
-        IEnumerable<TranscriptFileInfo> filtered = _allTranscripts;
-        if (!string.IsNullOrEmpty(filter))
-            filtered = filtered.Where(t => t.FileName.Contains(filter, StringComparison.OrdinalIgnoreCase));
 
-        var sorted = sortTag switch
-        {
-            "size" => filtered.OrderByDescending(t => t.CharCount),
-            "name" => filtered.OrderBy(t => t.FileName, StringComparer.OrdinalIgnoreCase),
-            _ => filtered.OrderByDescending(t => t.LastModified) // "date"
-        };
-
-        var list = sorted.ToList();
-        TranscriptList.ItemsSource = list;
-    }
-
-    private void TranscriptSortCombo_Changed(object sender, SelectionChangedEventArgs e) => ApplyTranscriptView();
+    private void TranscriptSortCombo_Changed(object sender, SelectionChangedEventArgs e) => ApplyMediaFileView();
     private void TranscriptFilterBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        ApplyTranscriptView();
+        ApplyMediaFileView();
         if (FilterPlaceholder != null)
             FilterPlaceholder.Visibility = string.IsNullOrEmpty(TranscriptFilterBox.Text) 
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -972,7 +1233,7 @@ public partial class MainWindow : Window
     /// <summary>Normalize bare drive letters (e.g. "C:") to root paths ("C:\") so Directory.Exists and os.walk work correctly.</summary>
     private static string NormalizePath(string path)
     {
-        path = path.Trim();
+        path = path.Trim().Replace('/', '\\');
         // "C:" or "D:" without trailing separator refers to CWD on that drive, not the root
         if (path.Length == 2 && char.IsLetter(path[0]) && path[1] == ':')
             path += Path.DirectorySeparatorChar;
@@ -982,6 +1243,14 @@ public partial class MainWindow : Window
     // ScanBtn_Click removed — Scan tab has been removed
 
     // BatchTranscribeBtn_Click removed — Voice Only button has been removed
+
+    private string GetSelectedWhisperModel()
+    {
+        var model = (WhisperModelCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "large-v1";
+        _appSettings.WhisperModel = model;
+        SaveAppSettings();
+        return model;
+    }
 
     private async void TranscribeAllBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -995,14 +1264,16 @@ public partial class MainWindow : Window
         _isScanRunning = false;
         _silentCount = 0;
         _silentFiles.Clear();
-        ViewSilentBtn.IsEnabled = false;
+
         TranscribeProgress.Value = 0;
         bool useVad = !(NoVadCheck.IsChecked ?? false);
         _appSettings.NoVadEnabled = NoVadCheck.IsChecked ?? true;
         SaveAppSettings();
-        AnalyticsService.TrackEvent("transcribe_all", new { drive_count = dirs.Count });
+        var model = GetSelectedWhisperModel();
+        AnalyticsService.TrackEvent("transcribe_all", new { drive_count = dirs.Count, model });
 
         TranscribeAllBtn.IsEnabled = false;
+        FindMeetingsBtn.IsEnabled = false;
         CancelTranscribeBtn.IsEnabled = true;
 
         try
@@ -1015,10 +1286,11 @@ public partial class MainWindow : Window
                 DirectoryBox.Text = dir; // For downstream code that reads DirectoryBox.Text
                 TranscriptFileInfo.MediaDirectory = dir;
 
-                await _runner.RunBatchTranscribeDirAsync(dir, useVad, skipExisting: _appSettings.SkipExistingFiles);
+                await _runner.RunBatchTranscribeDirAsync(dir, useVad, skipExisting: _appSettings.SkipExistingFiles, model: model);
             }
             TranscribeStatusLabel.Text = $"Done — transcribed {dirs.Count} location(s)";
             StatusBar.Text = "Transcription complete";
+            RefreshMediaFileList();
         }
         catch (Exception ex)
         {
@@ -1027,9 +1299,14 @@ public partial class MainWindow : Window
         finally
         {
             TranscribeAllBtn.IsEnabled = true;
+            FindMeetingsBtn.IsEnabled = true;
             CancelTranscribeBtn.IsEnabled = false;
         }
     }
+
+
+
+
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -1057,7 +1334,7 @@ public partial class MainWindow : Window
                     var blockCount = _report.Results.Where(r => r.Error == null).Sum(r => r.Blocks.Count);
                     TranscribeCountLabel.Text = $"{voiceCount} files with voice ({blockCount} blocks)";
                     StatusBar.Text = $"Loaded results from {dialog.FileName}";
-                    RefreshTranscriptList();
+                    RefreshMediaFileList();
                 }
             }
             catch (Exception ex)
@@ -1069,54 +1346,80 @@ public partial class MainWindow : Window
 
     private void RefreshTranscriptsBtn_Click(object sender, RoutedEventArgs e)
     {
-        RefreshTranscriptList();
+        RefreshMediaFileList();
     }
 
-    private void TranscriptList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    /// <summary>Helper to get a TranscriptFileInfo from the currently selected MediaFileInfo</summary>
+    private TranscriptFileInfo? GetSelectedTranscriptFromMediaList()
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        if (MediaFileList.SelectedItem is MediaFileInfo mf && mf.BestTranscriptPath != null)
         {
-            _selectedTranscriptPath = info.FullPath;
-            try
+            var ti = new TranscriptFileInfo { FullPath = mf.BestTranscriptPath };
+            ti.ReadSize();
+            return ti;
+        }
+        return null;
+    }
+
+    private void MediaFileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (MediaFileList.SelectedItem is MediaFileInfo mf)
+        {
+            // Load best transcript if available
+            if (mf.BestTranscriptPath != null && File.Exists(mf.BestTranscriptPath))
             {
-                var content = File.ReadAllText(info.FullPath);
-                // Parse into clickable transcript lines
-                LoadTranscriptLines(content);
+                _selectedTranscriptPath = mf.BestTranscriptPath;
+                var info = new TranscriptFileInfo { FullPath = mf.BestTranscriptPath };
+                info.ReadSize();
+                try
+                {
+                    var content = File.ReadAllText(info.FullPath);
+                    LoadTranscriptLines(content);
 
-                var mediaPath = info.SourceMediaPath;
-                TranscriptFileLabel.Text = mediaPath != null 
-                    ? $"📂 {mediaPath}" 
-                    : info.FullPath;
-                OpenMediaBtn.Visibility = mediaPath != null ? Visibility.Visible : Visibility.Collapsed;
-                OpenInExplorerBtn.Visibility = Visibility.Visible;
+                    TranscriptFileLabel.Text = $"📂 {mf.FullPath}";
+                    OpenMediaBtn.Visibility = File.Exists(mf.FullPath) ? Visibility.Visible : Visibility.Collapsed;
+                    OpenInExplorerBtn.Visibility = Visibility.Visible;
 
-                // Enable action buttons
-                InlineSummarizeBtn.IsEnabled = true;
-                InlineOutlineBtn.IsEnabled = true;
+                    InlineSummarizeBtn.IsEnabled = true;
+                    InlineOutlineBtn.IsEnabled = true;
+                    RetranscribeBtn.IsEnabled = true;
+                    RetranscribePanel.Visibility = Visibility.Visible;
+
+                    var versions = FindSiblingVersions(info);
+                    CompareBtn.Content = versions.Count > 1 ? $"📊 Compare ({versions.Count})" : "📊 Compare";
+                    CompareBtn.IsEnabled = versions.Count > 1;
+                    CompareBtn.Visibility = versions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+
+                    DetectTranscriptVersions(info);
+                    LoadMediaForTranscript(mf.FullPath);
+
+                    StatusBar.Text = $"Viewing: {mf.FileName}" +
+                        (mf.TranscriptModels.Count > 0 ? $" (models: {mf.ModelBadges})" : "");
+                }
+                catch (Exception ex)
+                {
+                    TranscriptLineList.ItemsSource = null;
+                    AnalysisOutputBox.Text = $"Error reading transcript: {ex.Message}";
+                }
+            }
+            else
+            {
+                // No transcript yet — show info
+                _selectedTranscriptPath = null;
+                TranscriptLineList.ItemsSource = null;
+                TranscriptFileLabel.Text = $"📂 {mf.FullPath}";
+                AnalysisOutputBox.Text = "No transcript yet — run Transcribe All Files to generate.";
+                OpenMediaBtn.Visibility = File.Exists(mf.FullPath) ? Visibility.Visible : Visibility.Collapsed;
+                OpenInExplorerBtn.Visibility = Visibility.Collapsed;
+                InlineSummarizeBtn.IsEnabled = false;
+                InlineOutlineBtn.IsEnabled = false;
                 RetranscribeBtn.IsEnabled = true;
                 RetranscribePanel.Visibility = Visibility.Visible;
-
-                // Show version count on Compare button
-                var versions = FindSiblingVersions(info);
-                CompareBtn.Content = versions.Count > 1 
-                    ? $"📊 Compare ({versions.Count})" 
-                    : "📊 Compare";
-                CompareBtn.IsEnabled = versions.Count > 1;
-                CompareBtn.Visibility = versions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
-
-                // Detect versions for inline version selector
-                DetectTranscriptVersions(info);
-
-                // Load media into embedded player
-                LoadMediaForTranscript(mediaPath);
-
-                StatusBar.Text = $"Viewing: {info.FileName}" + 
-                    (versions.Count > 1 ? $" ({versions.Count} versions available)" : "");
-            }
-            catch (Exception ex)
-            {
-                TranscriptLineList.ItemsSource = null;
-                AnalysisOutputBox.Text = $"Error reading file: {ex.Message}";
+                CompareBtn.Visibility = Visibility.Collapsed;
+                VersionCombo.Visibility = Visibility.Collapsed;
+                InlineVersionLabel.Text = "";
+                LoadMediaForTranscript(mf.FullPath);
+                StatusBar.Text = $"Selected: {mf.FileName} (no transcript)";
             }
         }
     }
@@ -1131,9 +1434,13 @@ public partial class MainWindow : Window
 
     private async void RetranscribeBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is not TranscriptFileInfo info) return;
-        var mediaPath = info.SourceMediaPath;
-        if (mediaPath == null)
+        string? mediaPath = null;
+        if (MediaFileList.SelectedItem is MediaFileInfo mf)
+            mediaPath = mf.FullPath;
+        else
+            return;
+
+        if (mediaPath == null || !File.Exists(mediaPath))
         {
             MessageBox.Show("Could not find the source media file.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -1159,14 +1466,14 @@ public partial class MainWindow : Window
     {
         if (e.Key != System.Windows.Input.Key.Enter) return;
         var query = SearchBox.Text.Trim();
-        if (string.IsNullOrEmpty(query)) { RefreshTranscriptList(); return; }
+        if (string.IsNullOrEmpty(query)) { RefreshMediaFileList(); return; }
 
         var dir = NormalizePath(DirectoryBox.Text);
         if (!Directory.Exists(dir)) return;
 
         // Local in-process search — fast, no Python needed
         var queryWords = query.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var allTranscripts = TranscriptList.ItemsSource as List<TranscriptFileInfo> ?? new List<TranscriptFileInfo>();
+        var allTranscripts = _allTranscripts;
 
         // If list is empty, discover files first
         if (allTranscripts.Count == 0)
@@ -1203,7 +1510,7 @@ public partial class MainWindow : Window
         }
 
         results.Sort((a, b) => b.score.CompareTo(a.score));
-        TranscriptList.ItemsSource = results.Select(r => r.info).ToList();
+        // Show matching transcripts — search results shown in output area
         TranscribeStatusLabel.Text = $"Search: {results.Count} files match \"{query}\"";
 
         // Show search results in the content area
@@ -1242,7 +1549,8 @@ public partial class MainWindow : Window
 
     private void CompareBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is not TranscriptFileInfo info) return;
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info == null) return;
 
         var versions = FindSiblingVersions(info);
         if (versions.Count < 2)
@@ -1325,6 +1633,220 @@ public partial class MainWindow : Window
     {
         LogBox.Clear();
     }
+    private string _currentSortColumn = "LastModified";
+    private ListSortDirection _currentSortDirection = ListSortDirection.Descending;
+
+    private void ApplyMediaFileView()
+    {
+        if (MediaFileList == null) return;
+        var filter = TranscriptFilterBox?.Text?.Trim() ?? "";
+
+        IEnumerable<MediaFileInfo> filtered = _allMediaFiles;
+
+        // Filter by current folder if checkbox is checked
+        if (CurrentFolderOnlyCheck?.IsChecked == true)
+        {
+            var activeDirs = GetSelectedDirectories();
+
+            if (activeDirs.Count > 0)
+            {
+                // Ensure paths end with separator so "C:\media" doesn't match "C:\media_other"
+                var normalizedDirs = activeDirs.Select(d => 
+                    d.EndsWith(Path.DirectorySeparatorChar) ? d : d + Path.DirectorySeparatorChar).ToList();
+                filtered = filtered.Where(m =>
+                    normalizedDirs.Any(d => m.FullPath.StartsWith(d, StringComparison.OrdinalIgnoreCase)));
+            }
+        }
+
+        if (!string.IsNullOrEmpty(filter))
+            filtered = filtered.Where(m => m.FileName.Contains(filter, StringComparison.OrdinalIgnoreCase));
+
+        // Use custom sort logic based on column header clicks
+        Func<MediaFileInfo, object> keySelector = _currentSortColumn switch
+        {
+            "Voice" => m => m.VoiceDurationSec,
+            "Transcribed" => m => m.HasTranscript,
+            "FileName" => m => m.FileName,
+            "Duration" => m => m.DurationSec,
+            "TranscriptLength" => m => m.TranscriptLength,
+            "medium.en" => m => m.HasModel("medium.en"),
+            "small.en" => m => m.HasModel("small.en"),
+            "large-v1" => m => m.HasModel("large-v1"),
+            "large-v2" => m => m.HasModel("large-v2"),
+            "large-v3" => m => m.HasModel("large-v3"),
+            "turbo" => m => m.HasModel("turbo"),
+            "medium" => m => m.HasModel("medium"),
+            "small" => m => m.HasModel("small"),
+            "base.en" => m => m.HasModel("base.en"),
+            "base" => m => m.HasModel("base"),
+            "tiny.en" => m => m.HasModel("tiny.en"),
+            "tiny" => m => m.HasModel("tiny"),
+            _ => m => m.LastModified
+        };
+
+        var allFiltered = filtered.ToList();
+
+        // Split into transcribed and untranscribed
+        var transcribed = allFiltered.Where(m => m.HasTranscript).ToList();
+        var untranscribed = allFiltered.Where(m => !m.HasTranscript).ToList();
+
+        // Sort transcribed list
+        MediaFileList.ItemsSource = _currentSortDirection == ListSortDirection.Ascending
+            ? transcribed.OrderBy(keySelector).ToList()
+            : transcribed.OrderByDescending(keySelector).ToList();
+
+        // Populate untranscribed list (sorted by voice duration descending — most promising first)
+        if (UntranscribedFileList != null)
+        {
+            UntranscribedFileList.ItemsSource = untranscribed
+                .OrderByDescending(m => m.VoiceDurationSec)
+                .ToList();
+        }
+
+        // Update untranscribed count label
+        if (UntranscribedCountLabel != null)
+            UntranscribedCountLabel.Text = $"({untranscribed.Count})";
+    }
+
+    private void RefreshMediaListBtn_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshMediaFileList();
+    }
+
+    private void CurrentFolderOnlyCheck_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshMediaFileList();
+    }
+
+    private void ShowUntranscribedCheck_Click(object sender, RoutedEventArgs e)
+    {
+        if (UntranscribedFileList != null)
+        {
+            UntranscribedFileList.Visibility = ShowUntranscribedCheck.IsChecked == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+    }
+
+    private void DeleteAllTranscriptsBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var transcriptDir = _runner.TranscriptDirectory;
+        if (!Directory.Exists(transcriptDir))
+        {
+            MessageBox.Show("No transcript directory found.", "Delete Transcripts", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var files = Directory.GetFiles(transcriptDir, "*.txt", SearchOption.AllDirectories);
+        if (files.Length == 0)
+        {
+            MessageBox.Show("No transcript files found.", "Delete Transcripts", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var result = MessageBox.Show(
+            $"Delete {files.Length} transcript files from:\n{transcriptDir}?\n\nThis cannot be undone.",
+            "Delete All Transcripts",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result == MessageBoxResult.Yes)
+        {
+            int deleted = 0;
+            foreach (var f in files)
+            {
+                try { File.Delete(f); deleted++; } catch { }
+            }
+            AppendLog($"[INFO] Deleted {deleted}/{files.Length} transcript files.");
+            StatusBar.Text = $"Deleted {deleted} transcript files.";
+            RefreshMediaFileList();
+        }
+    }
+
+    private void MediaFileList_HeaderClick(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is GridViewColumnHeader header && header.Column != null)
+        {
+            var column = header.Content as string;
+            if (string.IsNullOrEmpty(column)) return;
+
+            // Map header names to property names
+            var property = column switch
+            {
+                "🎙️ Voice" => "Voice",
+                "📝" => "Transcribed",
+                "📁 Filename" => "FileName",
+                "📄" => "TranscriptLength",
+                "med.en" => "medium.en",
+                "sm.en" => "small.en",
+                "lg-v1" => "large-v1",
+                "lg-v2" => "large-v2",
+                "lg-v3" => "large-v3",
+                "turbo" => "turbo",
+                "med" => "medium",
+                "small" => "small",
+                "bs.en" => "base.en",
+                "base" => "base",
+                "ty.en" => "tiny.en",
+                "tiny" => "tiny",
+                _ => "LastModified"
+            };
+
+            if (_currentSortColumn == property)
+            {
+                // Toggle direction
+                _currentSortDirection = _currentSortDirection == ListSortDirection.Ascending
+                    ? ListSortDirection.Descending
+                    : ListSortDirection.Ascending;
+            }
+            else
+            {
+                _currentSortColumn = property;
+                _currentSortDirection = ListSortDirection.Ascending;
+            }
+
+            ApplyMediaFileView();
+        }
+    }
+
+    private async void FindMeetingsBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = NormalizePath(DirectoryBox.Text);
+        if (!Directory.Exists(dir))
+        {
+            MessageBox.Show("Please select a valid directory first.", "Invalid Directory", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var skipExisting = SkipExistingCheck.IsChecked == true;
+        var vadThreshold = _appSettings.VadSensitivity;
+
+        TranscribeStatusLabel.Text = $"VAD scanning for voice (sensitivity: {vadThreshold:F1})...";
+        TranscribeProgress.Value = 0;
+        TranscribeProgress.IsIndeterminate = true;
+
+        FindMeetingsBtn.IsEnabled = false;
+
+        try
+        {
+            await _runner.RunVadScanAsync(dir, vadThreshold: vadThreshold, reportPath: _reportPath, skipExisting: skipExisting);
+
+            // Load results
+            TryLoadExistingResults();
+            RefreshMediaFileList();
+        }
+        catch (Exception ex)
+        {
+            TranscribeStatusLabel.Text = $"Error: {ex.Message}";
+            MessageBox.Show($"Error during VAD scan: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            TranscribeProgress.IsIndeterminate = false;
+            TranscribeProgress.Value = 0;
+            FindMeetingsBtn.IsEnabled = true;
+        }
+    }
     private void ViewLogBtn_Click(object sender, RoutedEventArgs e)
     {
         var dir = NormalizePath(DirectoryBox.Text);
@@ -1378,7 +1900,8 @@ public partial class MainWindow : Window
         var openTranscript = new MenuItem { Header = "📄 Open Transcript" };
         openTranscript.Click += (s, e) =>
         {
-            if (TranscriptList.SelectedItem is TranscriptFileInfo info && File.Exists(info.FullPath))
+            var info = GetSelectedTranscriptFromMediaList();
+            if (info != null && File.Exists(info.FullPath))
             {
                 try { Process.Start(new ProcessStartInfo(info.FullPath) { UseShellExecute = true }); }
                 catch { }
@@ -1388,56 +1911,47 @@ public partial class MainWindow : Window
         var openInPlayer = new MenuItem { Header = "▶ Open Media File in Player" };
         openInPlayer.Click += (s, e) =>
         {
-            if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+            if (MediaFileList.SelectedItem is MediaFileInfo mf && File.Exists(mf.FullPath))
             {
-                var mediaPath = info.SourceMediaPath;
-                if (mediaPath != null && File.Exists(mediaPath))
-                {
-                    try { Process.Start(new ProcessStartInfo(mediaPath) { UseShellExecute = true }); }
-                    catch { }
-                }
-                else
-                {
-                    MessageBox.Show("Could not find the source media file.", "Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
+                try { Process.Start(new ProcessStartInfo(mf.FullPath) { UseShellExecute = true }); }
+                catch { }
+            }
+            else
+            {
+                MessageBox.Show("Could not find the source media file.", "Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };
 
-        var revealInExplorer = new MenuItem { Header = "📂 Reveal Media File in Explorer" };
+        var revealInExplorer = new MenuItem { Header = "📂 Reveal in Explorer" };
         revealInExplorer.Click += (s, e) =>
         {
-            if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+            if (MediaFileList.SelectedItem is MediaFileInfo mf && File.Exists(mf.FullPath))
             {
-                var mediaPath = info.SourceMediaPath;
-                if (mediaPath != null && File.Exists(mediaPath))
-                {
-                    Process.Start("explorer.exe", $"/select,\"{mediaPath}\"");
-                }
-                else if (Directory.Exists(info.FolderPath))
-                {
-                    Process.Start("explorer.exe", $"/select,\"{info.FullPath}\"");
-                }
+                Process.Start("explorer.exe", $"/select,\"{mf.FullPath}\"");
             }
         };
 
         var summarize = new MenuItem { Header = "📝 Summarize" };
         summarize.Click += async (s, e) =>
         {
-            if (TranscriptList.SelectedItem is TranscriptFileInfo info && File.Exists(info.FullPath))
+            var info = GetSelectedTranscriptFromMediaList();
+            if (info != null && File.Exists(info.FullPath))
                 await RunContextMenuAnalysis(info.FullPath, "summarize");
         };
 
         var outline = new MenuItem { Header = "📋 Outline" };
         outline.Click += async (s, e) =>
         {
-            if (TranscriptList.SelectedItem is TranscriptFileInfo info && File.Exists(info.FullPath))
+            var info = GetSelectedTranscriptFromMediaList();
+            if (info != null && File.Exists(info.FullPath))
                 await RunContextMenuAnalysis(info.FullPath, "outline");
         };
 
         var deleteTranscript = new MenuItem { Header = "🗑️ Delete Transcript" };
         deleteTranscript.Click += (s, e) =>
         {
-            if (TranscriptList.SelectedItem is TranscriptFileInfo info && File.Exists(info.FullPath))
+            var info = GetSelectedTranscriptFromMediaList();
+            if (info != null && File.Exists(info.FullPath))
             {
                 var result = MessageBox.Show(
                     $"Delete \"{info.FileName}\"?\n\nThis cannot be undone.",
@@ -1447,7 +1961,7 @@ public partial class MainWindow : Window
                     try
                     {
                         File.Delete(info.FullPath);
-                        RefreshTranscriptList();
+                        RefreshMediaFileList();
                     }
                     catch (Exception ex)
                     {
@@ -1466,7 +1980,7 @@ public partial class MainWindow : Window
         ctx.Items.Add(outline);
         ctx.Items.Add(new Separator());
         ctx.Items.Add(deleteTranscript);
-        TranscriptList.ContextMenu = ctx;
+        MediaFileList.ContextMenu = ctx;
     }
 
     /// <summary>Run analysis from context menu — uses Analysis tab settings, switches to Analysis tab to show results.</summary>
@@ -1517,21 +2031,28 @@ public partial class MainWindow : Window
         }
     }
 
+    // ===== OPEN TRANSCRIPT FOLDER =====
+
+    private void OpenTranscriptFolderBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = _runner.TranscriptDirectory;
+        if (Directory.Exists(dir))
+            Process.Start("explorer.exe", $"\"{dir}\"");
+        else
+            MessageBox.Show($"Transcript folder not found:\n{dir}", "Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
     // ===== OPEN MEDIA FILE =====
 
     private void OpenMediaBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        if (MediaFileList.SelectedItem is MediaFileInfo mf && File.Exists(mf.FullPath))
         {
-            var mediaPath = info.SourceMediaPath;
-            if (mediaPath != null && File.Exists(mediaPath))
-            {
-                Process.Start("explorer.exe", $"/select,\"{mediaPath}\"");
-            }
-            else
-            {
-                MessageBox.Show("Could not find the source media file.", "Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            Process.Start("explorer.exe", $"/select,\"{mf.FullPath}\"");
+        }
+        else
+        {
+            MessageBox.Show("Could not find the source media file.", "Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -1753,10 +2274,9 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            // Select the file in Analysis list to show progress
-            var items = TranscriptList.ItemsSource as IEnumerable<TranscriptFileInfo>;
-            var match = items?.FirstOrDefault(a => a.FullPath.Equals(t.FullPath, StringComparison.OrdinalIgnoreCase));
-            if (match != null) TranscriptList.SelectedItem = match;
+            // Select corresponding media file to show progress
+            var mfMatch = _allMediaFiles.FirstOrDefault(m => m.BestTranscriptPath?.Equals(t.FullPath, StringComparison.OrdinalIgnoreCase) == true);
+            if (mfMatch != null) MediaFileList.SelectedItem = mfMatch;
 
             try
             {
@@ -1785,9 +2305,10 @@ public partial class MainWindow : Window
 
     private async Task RunAnalysisOnSelected(string analyzeType)
     {
-        if (TranscriptList.SelectedItem is not TranscriptFileInfo info)
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info == null)
         {
-            AnalysisStatusLabel.Text = "Select a transcript first";
+            AnalysisStatusLabel.Text = "Select a media file with transcript first";
             return;
         }
 
@@ -1841,19 +2362,21 @@ public partial class MainWindow : Window
     }
 
     // AnalysisTranscriptList_SelectionChanged removed — Analysis tab merged into Transcribe tab.
-    // TranscriptList_SelectionChanged (above) handles all selection logic now.
+    // MediaFileList_SelectionChanged (above) handles all selection logic now.
 
     // ===== TRANSCRIPT CONTEXT MENU =====
 
     private async void ContextSummarize_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info != null)
             await RunAnalysisOnTranscript(info.FullPath, "summarize");
     }
 
     private async void ContextOutline_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info != null)
             await RunAnalysisOnTranscript(info.FullPath, "outline");
     }
 
@@ -1861,11 +2384,10 @@ public partial class MainWindow : Window
 
     private void ContextOpenMediaPlayer_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is not TranscriptFileInfo info) return;
-        var mediaPath = info.SourceMediaPath;
-        if (mediaPath != null && File.Exists(mediaPath))
+        if (MediaFileList.SelectedItem is not MediaFileInfo mf) return;
+        if (File.Exists(mf.FullPath))
         {
-            Process.Start(new ProcessStartInfo(mediaPath) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(mf.FullPath) { UseShellExecute = true });
         }
         else
         {
@@ -1875,22 +2397,24 @@ public partial class MainWindow : Window
 
     private void ContextRevealExplorer_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is not TranscriptFileInfo info) return;
-        if (File.Exists(info.FullPath))
+        if (MediaFileList.SelectedItem is not MediaFileInfo mf) return;
+        if (File.Exists(mf.FullPath))
         {
-            Process.Start("explorer.exe", $"/select,\"{info.FullPath}\"");
+            Process.Start("explorer.exe", $"/select,\"{mf.FullPath}\"");
         }
     }
 
     private async void InlineSummarizeBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info != null)
             await RunAnalysisOnTranscript(info.FullPath, "summarize");
     }
 
     private async void InlineOutlineBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info != null)
             await RunAnalysisOnTranscript(info.FullPath, "outline");
     }
 
@@ -1912,13 +2436,15 @@ public partial class MainWindow : Window
 
     private async void AnalysisContextSummarize_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info != null)
             await RunAnalysisOnTranscript(info.FullPath, "summarize");
     }
 
     private async void AnalysisContextOutline_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscriptList.SelectedItem is TranscriptFileInfo info)
+        var info = GetSelectedTranscriptFromMediaList();
+        if (info != null)
             await RunAnalysisOnTranscript(info.FullPath, "outline");
     }
 
@@ -1973,7 +2499,7 @@ public partial class MainWindow : Window
 
     private void LoadTranscriptLines(string content)
     {
-        _currentTranscriptLines.Clear();
+        var newLines = new List<TranscriptLine>();
         var lines = content.Split('\n');
         foreach (var rawLine in lines)
         {
@@ -1987,7 +2513,7 @@ public partial class MainWindow : Window
                 int m = int.Parse(match.Groups[2].Value);
                 double s = double.Parse(match.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture);
                 var offset = new TimeSpan(0, h, m, (int)s, (int)((s - (int)s) * 1000));
-                _currentTranscriptLines.Add(new TranscriptLine
+                newLines.Add(new TranscriptLine
                 {
                     Offset = offset,
                     TimeLabel = $"[{h}:{m:D2}:{(int)s:D2}]",
@@ -1997,7 +2523,7 @@ public partial class MainWindow : Window
             else
             {
                 // Non-timestamped line
-                _currentTranscriptLines.Add(new TranscriptLine
+                newLines.Add(new TranscriptLine
                 {
                     Offset = TimeSpan.Zero,
                     TimeLabel = "",
@@ -2005,6 +2531,8 @@ public partial class MainWindow : Window
                 });
             }
         }
+        _currentTranscriptLines = newLines;
+        TranscriptLineList.ItemsSource = null;
         TranscriptLineList.ItemsSource = _currentTranscriptLines;
     }
 

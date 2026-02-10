@@ -16,7 +16,7 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,12">
             <TextBlock Text="TurboScribe" FontSize="22" FontWeight="Bold" 
                        Foreground="{StaticResource AccentLightBrush}"/>
-            <TextBlock Text="Transcribe entire drives of audio and video — locally, privately, and for free"
+            <TextBlock Text="Transcribe entire drives of audio and video — free, local and private"
                        Foreground="{StaticResource TextDimBrush}" FontSize="12" Margin="0,4,0,8"/>
             <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,0,0,0"/>
         </StackPanel>
@@ -80,28 +80,50 @@
                     <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}"
                             BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                             CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
-                        <StackPanel Orientation="Horizontal">
-                            <Button x:Name="TranscribeAllBtn" Content="▶ Transcribe All Files" 
-                                    Style="{StaticResource AccentButton}"
-                                    Click="TranscribeAllBtn_Click"
-                                    ToolTip="Transcribe every media file in the directory"/>
-                            <CheckBox x:Name="SkipExistingCheck" Content="Skip existing" 
-                                      VerticalAlignment="Center" Margin="10,0,0,0"
-                                      Foreground="{StaticResource TextDimBrush}" FontSize="11"
-                                      Checked="SkipExistingCheck_Changed" Unchecked="SkipExistingCheck_Changed"
-                                      ToolTip="Skip media files that already have a transcript"/>
-                            <Button x:Name="CancelTranscribeBtn" Content="⏹ Cancel" 
-                                    Style="{StaticResource AccentButton}" Margin="8,0,0,0"
-                                    Click="CancelBtn_Click" IsEnabled="False"/>
-                            <Button x:Name="RefreshTranscriptsBtn" Content="🔄 Refresh" 
-                                    Style="{StaticResource AccentButton}" Margin="8,0,0,0"
-                                    Click="RefreshTranscriptsBtn_Click"/>
-                            <Button x:Name="ViewSilentBtn" Content="🔇 View Silent Files" 
-                                    Style="{StaticResource AccentButton}" Margin="8,0,0,0"
-                                    Click="ViewSilentBtn_Click" IsEnabled="False"/>
-                            <TextBlock x:Name="TranscribeCountLabel" VerticalAlignment="Center"
-                                       Foreground="{StaticResource TextDimBrush}" FontSize="12"
-                                       Margin="12,0,0,0" Text="Set directory and click Transcribe"/>
+                        <StackPanel>
+                            <!-- Transcribe group -->
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="TranscribeAllBtn" Content="▶ Transcribe All Files" 
+                                        Style="{StaticResource AccentButton}"
+                                        Click="TranscribeAllBtn_Click"
+                                        ToolTip="Transcribe every media file in the directory"/>
+                                <TextBlock Text="Whisper Model:" Foreground="{StaticResource TextDimBrush}" 
+                                           FontSize="11" VerticalAlignment="Center" Margin="10,0,4,0"/>
+                                <ComboBox x:Name="WhisperModelCombo" Width="130" FontSize="10"
+                                          SelectedIndex="8"
+                                          ToolTip="Whisper model used for batch transcription">
+                                    <ComboBoxItem Content="tiny" Tag="tiny"/>
+                                    <ComboBoxItem Content="tiny.en" Tag="tiny.en"/>
+                                    <ComboBoxItem Content="base" Tag="base"/>
+                                    <ComboBoxItem Content="base.en" Tag="base.en"/>
+                                    <ComboBoxItem Content="small" Tag="small"/>
+                                    <ComboBoxItem Content="small.en" Tag="small.en"/>
+                                    <ComboBoxItem Content="medium" Tag="medium"/>
+                                    <ComboBoxItem Content="medium.en" Tag="medium.en"/>
+                                    <ComboBoxItem Content="large-v1" Tag="large-v1"/>
+                                    <ComboBoxItem Content="large-v2" Tag="large-v2"/>
+                                    <ComboBoxItem Content="large-v3" Tag="large-v3"/>
+                                    <ComboBoxItem Content="turbo" Tag="turbo"/>
+                                </ComboBox>
+                                <CheckBox x:Name="SkipExistingCheck" Content="Skip existing" 
+                                          VerticalAlignment="Center" Margin="10,0,0,0"
+                                          Foreground="{StaticResource TextDimBrush}" FontSize="11"
+                                          Checked="SkipExistingCheck_Changed" Unchecked="SkipExistingCheck_Changed"
+                                          ToolTip="Skip media files that already have a transcript"/>
+                                <Button x:Name="CancelTranscribeBtn" Content="⏹ Cancel" 
+                                        Style="{StaticResource AccentButton}" Margin="8,0,0,0"
+                                        Click="CancelBtn_Click" IsEnabled="False"/>
+                            </StackPanel>
+                            <!-- Find Meetings group -->
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button x:Name="FindMeetingsBtn" Content="🔍 Scan for Voice" 
+                                        Style="{StaticResource AccentButton}"
+                                        Click="FindMeetingsBtn_Click"
+                                        ToolTip="Fast VAD scan to find files with voice/speech. No Whisper model needed."/>
+                                <TextBlock x:Name="TranscribeCountLabel" VerticalAlignment="Center"
+                                           Foreground="{StaticResource TextDimBrush}" FontSize="12"
+                                           Margin="12,0,0,0" Text="Set directory and click Transcribe"/>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
@@ -135,7 +157,7 @@
                         <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch"
                                       Background="{StaticResource BorderBrush}" Cursor="SizeWE"/>
 
-                        <!-- Left: Transcript file list -->
+                        <!-- Left: Media file list -->
                         <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" 
                                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                 CornerRadius="4">
@@ -145,20 +167,35 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
                                 <Grid Grid.Row="0" Margin="8,6,8,2">
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="📄 Transcript Files" 
+                                    <TextBlock Text="🎬 Media Files" 
                                                FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource TextBrush}" 
                                                VerticalAlignment="Center" Margin="2,0,0,0"/>
-                                    <ComboBox x:Name="TranscriptSortCombo" Grid.Column="1" Width="90" FontSize="10"
+                                    <CheckBox x:Name="CurrentFolderOnlyCheck" Grid.Column="1"
+                                              Content="📂 Current folder" 
+                                              Foreground="{StaticResource TextDimBrush}" FontSize="10"
+                                              IsChecked="True" Margin="10,0,0,0"
+                                              VerticalAlignment="Center"
+                                              Click="CurrentFolderOnlyCheck_Click"
+                                              ToolTip="When checked, only shows media files from the selected directories. Uncheck to see all previously scanned files."/>
+                                    <Button Grid.Column="2" Content="🔄" FontSize="11" Padding="4,2"
+                                            Style="{StaticResource AccentButton}"
+                                            Click="RefreshMediaListBtn_Click"
+                                            ToolTip="Refresh media file list" Margin="0,0,4,0"/>
+                                    <ComboBox x:Name="TranscriptSortCombo" Grid.Column="3" Width="90" FontSize="10"
                                               SelectedIndex="0" SelectionChanged="TranscriptSortCombo_Changed">
                                         <ComboBoxItem Content="Newest" Tag="date"/>
-                                        <ComboBoxItem Content="Largest" Tag="size"/>
+                                        <ComboBoxItem Content="Voice ✓" Tag="voice"/>
                                         <ComboBoxItem Content="Name" Tag="name"/>
                                     </ComboBox>
                                 </Grid>
@@ -170,7 +207,7 @@
                                              BorderBrush="{StaticResource BorderBrush}"
                                              FontSize="12" Padding="6,4"
                                              TextChanged="TranscriptFilterBox_TextChanged"
-                                             ToolTip="Filter transcript files by name"/>
+                                             ToolTip="Filter media files by name"/>
                                     <TextBlock x:Name="FilterPlaceholder" Text="🔍 Filter by filename..." FontSize="12" 
                                                Foreground="#555570" Padding="8,5" IsHitTestVisible="False"/>
                                 </Grid>
@@ -187,42 +224,152 @@
                                     <TextBlock x:Name="SearchPlaceholder" Text="🔎 Search inside transcripts (Enter)..." FontSize="12" 
                                                Foreground="#555570" Padding="8,5" IsHitTestVisible="False"/>
                                 </Grid>
-                                <ListBox x:Name="TranscriptList" Grid.Row="3"
-                                         Background="Transparent" BorderThickness="0"
-                                         Foreground="{StaticResource TextBrush}"
-                                         FontSize="11" Padding="4"
-                                         SelectionChanged="TranscriptList_SelectionChanged">
-                                    <ListBox.ContextMenu>
+                                <ListView x:Name="MediaFileList" Grid.Row="3"
+                                          Background="Transparent" BorderThickness="0"
+                                          Foreground="{StaticResource TextBrush}"
+                                          FontSize="11"
+                                          SelectionChanged="MediaFileList_SelectionChanged">
+                                    <ListView.ContextMenu>
                                         <ContextMenu Background="#1E1E2E" Foreground="{StaticResource TextBrush}" BorderBrush="{StaticResource BorderBrush}">
                                             <MenuItem Header="📝 Summarize" Click="ContextSummarize_Click"/>
                                             <MenuItem Header="📋 Outline" Click="ContextOutline_Click"/>
                                             <Separator/>
                                             <MenuItem Header="▶ Open Media File in Player" Click="ContextOpenMediaPlayer_Click"/>
-                                            <MenuItem Header="📂 Reveal Media File in Explorer" Click="ContextRevealExplorer_Click"/>
+                                            <MenuItem Header="📂 Reveal in Explorer" Click="ContextRevealExplorer_Click"/>
                                         </ContextMenu>
-                                    </ListBox.ContextMenu>
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Margin="2,4">
-                                                <TextBlock Text="{Binding FileName}" 
-                                                           Foreground="{StaticResource TextBrush}"
-                                                           FontSize="12" TextTrimming="CharacterEllipsis"/>
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Text="{Binding SizeLabel}" 
-                                                               Foreground="#7C3AED"
-                                                               FontSize="10" FontWeight="SemiBold" Margin="0,0,8,0"/>
-                                                    <TextBlock Text="{Binding FolderPath}" 
-                                                               Foreground="{StaticResource TextDimBrush}"
-                                                               FontSize="10" TextTrimming="CharacterEllipsis"/>
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
+                                    </ListView.ContextMenu>
+                                    <ListView.View>
+                                        <GridView>
+                                            <GridViewColumn Width="220">
+                                                <GridViewColumnHeader Content="📁 Filename" Click="MediaFileList_HeaderClick"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding FullPath}" Foreground="{StaticResource TextBrush}"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="55">
+                                                <GridViewColumnHeader Content="🎙️ Voice" Click="MediaFileList_HeaderClick" ToolTip="Speech duration detected by VAD"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding VoiceDurationLabel}" Foreground="{StaticResource TextDimBrush}"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="55">
+                                                <GridViewColumnHeader Content="📄" Click="MediaFileList_HeaderClick" ToolTip="Transcript character count"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding TranscriptLengthLabel}" Foreground="{StaticResource TextDimBrush}"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="52">
+                                                <GridViewColumnHeader Content="med.en" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="medium.en"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding MediumEnIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="48">
+                                                <GridViewColumnHeader Content="sm.en" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="small.en"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding SmallEnIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="44">
+                                                <GridViewColumnHeader Content="lg-v1" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="large-v1"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding LargeV1Icon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="44">
+                                                <GridViewColumnHeader Content="lg-v2" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="large-v2"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding LargeV2Icon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="44">
+                                                <GridViewColumnHeader Content="lg-v3" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="large-v3"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding LargeV3Icon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="42">
+                                                <GridViewColumnHeader Content="turbo" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="turbo"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding TurboIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="48">
+                                                <GridViewColumnHeader Content="med" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="medium"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding MediumIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="42">
+                                                <GridViewColumnHeader Content="small" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="small"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding SmallIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="48">
+                                                <GridViewColumnHeader Content="bs.en" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="base.en"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding BaseEnIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="38">
+                                                <GridViewColumnHeader Content="base" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="base"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding BaseIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="44">
+                                                <GridViewColumnHeader Content="ty.en" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="tiny.en"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding TinyEnIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="38">
+                                                <GridViewColumnHeader Content="tiny" Click="MediaFileList_HeaderClick" FontSize="9" ToolTip="tiny"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding TinyIcon}" FontSize="11" HorizontalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+
+                                        </GridView>
+                                    </ListView.View>
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
                                             <Setter Property="Background" Value="Transparent"/>
-                                            <Setter Property="Padding" Value="6,2"/>
+                                            <Setter Property="Padding" Value="2,1"/>
                                             <Setter Property="Cursor" Value="Hand"/>
+                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
                                             <Style.Triggers>
                                                 <Trigger Property="IsSelected" Value="True">
                                                     <Setter Property="Background" Value="#3B3B52"/>
@@ -232,8 +379,57 @@
                                                 </Trigger>
                                             </Style.Triggers>
                                         </Style>
-                                    </ListBox.ItemContainerStyle>
-                                </ListBox>
+                                    </ListView.ItemContainerStyle>
+                                </ListView>
+                                <!-- Row 4: Untranscribed toggle -->
+                                <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="8,4,8,2">
+                                    <CheckBox x:Name="ShowUntranscribedCheck" 
+                                              Content="📋 Untranscribed files" 
+                                              Foreground="{StaticResource TextDimBrush}" FontSize="11"
+                                              IsChecked="False"
+                                              Click="ShowUntranscribedCheck_Click"
+                                              ToolTip="Show/hide files without transcripts"/>
+                                    <TextBlock x:Name="UntranscribedCountLabel" 
+                                               Foreground="{StaticResource TextDimBrush}" FontSize="10"
+                                               VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <!-- Row 5: Untranscribed list -->
+                                <ListView x:Name="UntranscribedFileList" Grid.Row="5"
+                                          Background="Transparent" BorderThickness="0"
+                                          Foreground="{StaticResource TextBrush}"
+                                          FontSize="11" MaxHeight="150"
+                                          Visibility="Collapsed"
+                                          SelectionChanged="MediaFileList_SelectionChanged">
+                                    <ListView.View>
+                                        <GridView>
+                                            <GridViewColumn Width="220">
+                                                <GridViewColumnHeader Content="📁 Filename"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding FullPath}" Foreground="{StaticResource TextDimBrush}"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="55">
+                                                <GridViewColumnHeader Content="🎙️ Voice" ToolTip="Speech duration detected by VAD"/>
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding VoiceDurationLabel}" Foreground="{StaticResource TextDimBrush}"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                        </GridView>
+                                    </ListView.View>
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="Background" Value="Transparent"/>
+                                            <Setter Property="Padding" Value="2,1"/>
+                                            <Setter Property="Cursor" Value="Hand"/>
+                                            <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                </ListView>
                             </Grid>
                         </Border>
 
@@ -277,7 +473,7 @@
                                                 Click="OpenMediaBtn_Click"
                                                 Visibility="Collapsed" FontSize="10" Padding="8,3"/>
                                         <Button x:Name="OpenInExplorerBtn" Grid.Column="2"
-                                                Content="📂 Folder" 
+                                                Content="📂 Transcript Folder" 
                                                 Style="{StaticResource AccentButton}"
                                                 Click="OpenInExplorerBtn_Click"
                                                 Visibility="Collapsed" FontSize="10" Padding="8,3" Margin="4,0,0,0"/>
@@ -638,6 +834,17 @@
                                 <ComboBoxItem Content="10 seconds" Tag="10"/>
                                 <ComboBoxItem Content="Manual (Click to refresh)" Tag="0"/>
                             </ComboBox>
+
+                            <TextBlock Text="Voice Detection (VAD) Sensitivity" Foreground="{StaticResource TextBrush}" FontSize="13" Margin="0,12,0,4"/>
+                            <ComboBox x:Name="VadSensitivityCombo" Width="200" HorizontalAlignment="Left"
+                                      SelectionChanged="VadSensitivityCombo_SelectionChanged"
+                                      ToolTip="Lower values detect quieter/distant speech but may give false positives. Higher values are more strict.">
+                                <ComboBoxItem Content="0.3 — Sensitive (outdoor)" Tag="0.3"/>
+                                <ComboBoxItem Content="0.4 — Moderate" Tag="0.4"/>
+                                <ComboBoxItem Content="0.5 — Default" Tag="0.5" IsSelected="True"/>
+                                <ComboBoxItem Content="0.6 — Conservative" Tag="0.6"/>
+                                <ComboBoxItem Content="0.8 — Strict (clear speech)" Tag="0.8"/>
+                            </ComboBox>
                         </StackPanel>
                     </GroupBox>
 
@@ -678,7 +885,12 @@
                             
                             <Button x:Name="InstallLibsBtn" Content="📥 Install AI Libraries" Width="180" HorizontalAlignment="Left"
                                     Style="{StaticResource AccentButton}" Click="InstallLibsBtn_Click" Margin="0,0,0,8"/>
-                            
+                            <Button Content="📂 Open Transcript Folder" Width="200" HorizontalAlignment="Left"
+                                    Style="{StaticResource AccentButton}" Click="OpenTranscriptFolderBtn_Click" Margin="0,0,0,8"
+                                    ToolTip="Open the folder where all transcripts are stored"/>
+                            <Button Content="🗑️ Delete All Transcripts" Width="200" HorizontalAlignment="Left"
+                                    Style="{StaticResource AccentButton}" Click="DeleteAllTranscriptsBtn_Click" Margin="0,0,0,8"
+                                    ToolTip="Delete all transcript files (requires confirmation)" Foreground="#FF6666"/>                            
                             <!-- Error summary (hidden until install runs) -->
                             <TextBlock x:Name="InstallErrorSummary" Foreground="#FF6666" FontSize="11" 
                                        TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"/>
@@ -739,11 +951,20 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="StatusBar" Grid.Column="0" 
                            Foreground="{StaticResource TextDimBrush}" FontSize="11"
                            Text="Ready — Select a directory and scan for voice"/>
-                <TextBlock x:Name="GpuLabel" Grid.Column="1" 
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="16,0">
+                    <CheckBox x:Name="TurboModeCheck" Content="⚡ Turbo Mode (GPU)" 
+                              Foreground="{StaticResource TextBrush}" FontSize="11"
+                              VerticalAlignment="Center" Click="TurboModeCheck_Click"/>
+                    <TextBlock x:Name="TurboStatusLabel" FontSize="10" VerticalAlignment="Center"
+                               Margin="6,0,0,0" Foreground="{StaticResource TextDimBrush}"
+                               Text="checking..."/>
+                </StackPanel>
+                <TextBlock x:Name="GpuLabel" Grid.Column="2" 
                            Foreground="{StaticResource AccentLightBrush}" FontSize="11"
                            Text="GPU: detecting..."
                            MouseLeftButtonDown="GpuLabel_MouseLeftButtonDown"

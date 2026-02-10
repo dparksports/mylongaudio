@@ -31,6 +31,9 @@ public class ScanFileResult
     [JsonPropertyName("segments_found")]
     public int SegmentsFound { get; set; }
 
+    [JsonPropertyName("speech_duration_sec")]
+    public double SpeechDurationSec { get; set; }
+
     [JsonPropertyName("blocks")]
     public List<VoiceBlock> Blocks { get; set; } = new();
 

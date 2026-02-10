@@ -100,153 +100,6 @@ def cluster_segments(segments, gap_threshold=180):
 
     return blocks, segment_count
 
-
-# ===== SILERO VAD-ONLY SCAN (no Whisper) =====
-
-_vad_model = None
-
-def _load_vad_model():
-    """Load Silero VAD model (cached after first load)."""
-    global _vad_model
-    if _vad_model is None:
-        import torch
-        print("[VAD] Loading Silero VAD model...")
-        _vad_model, _ = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', trust_repo=True)
-    return _vad_model
-
-def _load_audio_as_tensor(file_path):
-    """Load audio file as 16kHz mono float32 tensor using ffmpeg."""
-    import torch
-    import subprocess
-    cmd = [
-        'ffmpeg', '-i', file_path,
-        '-f', 's16le', '-acodec', 'pcm_s16le',
-        '-ar', '16000', '-ac', '1',
-        '-v', 'quiet',
-        '-'
-    ]
-    proc = subprocess.run(cmd, capture_output=True, timeout=600)
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode()[:200]}")
-    import numpy as np
-    audio = np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
-    return torch.from_numpy(audio), len(audio) / 16000.0
-
-def run_vad_scan(file_path, threshold=0.5):
-    """
-    Use Silero VAD to detect speech segments without transcription.
-    Returns (speech_timestamps, speech_duration_sec, total_duration_sec)
-    """
-    import torch
-    model = _load_vad_model()
-    wav, total_duration = _load_audio_as_tensor(file_path)
-    
-    # Get speech timestamps
-    speech_timestamps = model(wav, 16000, threshold=threshold, return_seconds=True)
-    # model() with return_seconds returns list of dicts with 'start' and 'end' in seconds
-    
-    speech_duration = sum(t['end'] - t['start'] for t in speech_timestamps)
-    
-    return speech_timestamps, speech_duration, total_duration
-
-def run_batch_vad_scan(directory, threshold=0.5, report_path=None, skip_existing=False):
-    """
-    Scan all media files in directory using Silero VAD (no Whisper).
-    Outputs JSON report compatible with existing format.
-    """
-    media_files = find_media_files(directory)
-    total = len(media_files)
-    print(f"[VAD-SCAN] Found {total} media files in: {directory}")
-    print(f"[VAD-SCAN] Sensitivity threshold: {threshold}")
-
-    if report_path is None:
-        report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_scan_results.json")
-
-    # Load existing report if skip_existing
-    existing_results = {}
-    if skip_existing and os.path.exists(report_path):
-        try:
-            with open(report_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if "results" in data:
-                    for r in data["results"]:
-                        if "file" in r:
-                            existing_results[r["file"]] = r
-            print(f"[VAD-SCAN] Loaded {len(existing_results)} existing results for skipping.")
-        except Exception as e:
-            print(f"[VAD-SCAN] Failed to load existing report: {e}")
-
-    results = []
-    files_with_voice = 0
-
-    for i, file_path in enumerate(media_files, 1):
-        # Skip if already scanned
-        if skip_existing and file_path in existing_results:
-            prev = existing_results[file_path]
-            if "error" not in prev:
-                print(f"\n[{i}/{total}] Skipping (already scanned): {os.path.basename(file_path)}")
-                results.append(prev)
-                if prev.get("segments_found", 0) > 0:
-                    files_with_voice += 1
-                continue
-
-        print(f"\n[{i}/{total}] VAD scanning: {os.path.basename(file_path)}")
-
-        try:
-            timestamps, speech_dur, total_dur = run_vad_scan(file_path, threshold=threshold)
-
-            if timestamps:
-                files_with_voice += 1
-                # Convert timestamps to blocks format
-                blocks = [{"start": round(t['start'], 2), "end": round(t['end'], 2)} for t in timestamps]
-                
-                entry = {
-                    "file": file_path,
-                    "duration_sec": round(total_dur, 1),
-                    "segments_found": len(timestamps),
-                    "speech_duration_sec": round(speech_dur, 1),
-                    "blocks": blocks,
-                    "transcribe_cmds": []
-                }
-                print(f"  [VOICE] {len(timestamps)} segments, {speech_dur:.1f}s speech / {total_dur:.1f}s total")
-                results.append(entry)
-            else:
-                print(f"  [SILENT] No speech detected")
-                results.append({
-                    "file": file_path,
-                    "duration_sec": round(total_dur, 1),
-                    "segments_found": 0,
-                    "speech_duration_sec": 0,
-                    "blocks": []
-                })
-
-        except Exception as e:
-            print(f"  [ERROR] {e}")
-            results.append({
-                "file": file_path,
-                "error": str(e)
-            })
-
-    # Write JSON report
-    os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
-
-    report = {
-        "date": datetime.now().isoformat(),
-        "directory": directory,
-        "total_files": total,
-        "files_with_voice": files_with_voice,
-        "results": results,
-        "scan_model": "silero-vad",
-        "vad_threshold": threshold
-    }
-
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, ensure_ascii=False)
-
-    print(f"\n[VAD-SCAN] Complete: {files_with_voice}/{total} files with voice")
-    print(f"[VAD-SCAN] Report saved to: {report_path}")
-
-
 def run_scanner(file_path, use_vad=True):
     """
     MODE 1: SCOUT (Speed)
@@ -274,7 +127,7 @@ def run_scanner(file_path, use_vad=True):
     if segment_count == 0:
         print("[INFO] No speech detected.")
 
-def run_batch_scanner(directory, use_vad=True, report_path=None, model=None, skip_existing=False):
+def run_batch_scanner(directory, use_vad=True, report_path=None, model=None):
     """
     MODE 3: BATCH SCOUT
     Scans all media files in a directory for voice activity.
@@ -291,37 +144,10 @@ def run_batch_scanner(directory, use_vad=True, report_path=None, model=None, ski
     else:
         print(f"[BATCH] Using pre-loaded model...")
 
-    # Load existing report if skip_existing is True
-    existing_results = {}
-    if report_path is None:
-        report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_scan_results.json")
-    
-    if skip_existing and os.path.exists(report_path):
-        try:
-             with open(report_path, "r", encoding="utf-8") as f:
-                 data = json.load(f)
-                 if "results" in data:
-                     for r in data["results"]:
-                         if "file" in r:
-                             existing_results[r["file"]] = r
-             print(f"[BATCH] Loaded {len(existing_results)} existing results for skipping.")
-        except Exception as e:
-            print(f"[BATCH] Failed to load existing report: {e}")
-
     results = []
     files_with_voice = 0
 
     for i, file_path in enumerate(media_files, 1):
-        # Skip if already in results and no error
-        if skip_existing and file_path in existing_results:
-             prev = existing_results[file_path]
-             if "error" not in prev:
-                 print(f"\n[{i}/{total}] Skipping (already scanned): {file_path}")
-                 results.append(prev)
-                 if prev.get("segments_found", 0) > 0:
-                     files_with_voice += 1
-                 continue
-
         print(f"\n[{i}/{total}] Scanning: {file_path}")
 
         try:
@@ -356,13 +182,6 @@ def run_batch_scanner(directory, use_vad=True, report_path=None, model=None, ski
                 results.append(entry)
             else:
                 print(f"  [SILENT] No speech detected")
-                # Record silent files too so we skip them next time
-                results.append({
-                    "file": file_path,
-                    "duration_sec": 0,
-                    "segments_found": 0,
-                    "blocks": []
-                })
 
         except Exception as e:
             print(f"  [ERROR] {e}")
@@ -372,20 +191,30 @@ def run_batch_scanner(directory, use_vad=True, report_path=None, model=None, ski
             })
 
     # Write JSON report
+    if report_path is None:
+        report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_scan_results.json")
+    
     # Ensure directory exists
     os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
 
     report = {
-        "date": datetime.now().isoformat(),
+        "scan_date": datetime.now().isoformat(),
         "directory": directory,
         "total_files": total,
         "files_with_voice": files_with_voice,
-        "results": results,
-        "scan_model": "tiny.en" if model is None else "custom"
+        "results": results
     }
 
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
+
+    # Print summary
+    print(f"\n{'='*60}")
+    print(f"SCAN COMPLETE")
+    print(f"{'='*60}")
+    print(f"Total files scanned: {total}")
+    print(f"Files with voice:    {files_with_voice}")
+    print(f"Report saved to:     {report_path}")
 
     if results:
         print(f"\n--- Files with Detected Voice ---")
@@ -397,7 +226,7 @@ def run_batch_scanner(directory, use_vad=True, report_path=None, model=None, ski
                 for cmd in r["transcribe_cmds"]:
                     print(f"    > {cmd}")
 
-def run_transcriber(file_path, start, end, model=None, model_name="large-v3", output_dir=None, skip_existing=False):
+def run_transcriber(file_path, start, end, model=None, output_dir=None, skip_existing=False):
     """
     MODE 2: SNIPER (Accuracy)
     Extracts the specific meeting and applies Large-v3.
@@ -407,7 +236,7 @@ def run_transcriber(file_path, start, end, model=None, model_name="large-v3", ou
     print(f"[STATUS] Range: {start:.1f}s - {end:.1f}s")
 
     if model is None:
-        model = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE)
+        model = WhisperModel("large-v3", device=DEVICE, compute_type=COMPUTE)
 
     segments, _ = model.transcribe(
         file_path,
@@ -423,14 +252,13 @@ def run_transcriber(file_path, start, end, model=None, model_name="large-v3", ou
         lines.append(line)
         print(f"[TEXT] {s.start:.2f}|{s.end:.2f}|{s.text.strip()}")
 
-    # Determine output path — include model name for comparison
-    safe_model = model_name.replace(".", "_").replace("-", "_")
+    # Determine output path
     base_name = os.path.splitext(os.path.basename(file_path))[0]
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-        out_path = os.path.join(output_dir, f"{base_name}_transcript_{safe_model}.txt")
+        out_path = os.path.join(output_dir, f"{base_name}_transcript.txt")
     else:
-        out_path = f"{os.path.splitext(file_path)[0]}_transcript_{safe_model}.txt"
+        out_path = f"{os.path.splitext(file_path)[0]}_transcript.txt"
 
     if skip_existing and os.path.exists(out_path):
         print(f"[SKIPPING] Target exists: {out_path}")
@@ -448,11 +276,11 @@ def run_transcriber(file_path, start, end, model=None, model_name="large-v3", ou
     print(f"[SAVED] {out_path}")
     return lines
 
-def run_batch_transcriber(report_path=None, output_dir=None, skip_existing=False, model_name="large-v1"):
+def run_batch_transcriber(report_path=None, output_dir=None, skip_existing=False):
     """
     MODE 4: BATCH SNIPER
     Reads the scan report and transcribes all detected voice segments
-    using the specified model. Saves transcriptions next to source files.
+    using large-v3. Saves transcriptions next to source files.
     """
     if report_path is None:
         report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_scan_results.json")
@@ -470,9 +298,9 @@ def run_batch_transcriber(report_path=None, output_dir=None, skip_existing=False
     total_blocks = sum(len(r["blocks"]) for r in voice_files)
 
     print(f"[BATCH] Found {len(voice_files)} files with voice ({total_blocks} blocks to transcribe)")
-    print(f"[BATCH] Loading {model_name} model (one-time)...")
+    print(f"[BATCH] Loading large-v3 model (one-time)...")
 
-    model = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE)
+    model = WhisperModel("large-v3", device=DEVICE, compute_type=COMPUTE)
 
     block_num = 0
     for i, entry in enumerate(voice_files, 1):
@@ -483,7 +311,7 @@ def run_batch_transcriber(report_path=None, output_dir=None, skip_existing=False
             block_num += 1
             print(f"  Block {block_num}/{total_blocks}: {b['start']:.1f}s - {b['end']:.1f}s")
             try:
-                run_transcriber(file_path, b["start"], b["end"], model=model, model_name=model_name, output_dir=output_dir, skip_existing=skip_existing)
+                run_transcriber(file_path, b["start"], b["end"], model=model, output_dir=output_dir, skip_existing=skip_existing)
             except Exception as e:
                 print(f"  [ERROR] {e}")
 
@@ -493,18 +321,18 @@ def run_batch_transcriber(report_path=None, output_dir=None, skip_existing=False
     print(f"Files processed: {len(voice_files)}")
     print(f"Blocks transcribed: {block_num}")
 
-def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None, skip_existing=False, model_name="large-v1"):
+def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None, skip_existing=False):
     """
     MODE 5: FULL BATCH TRANSCRIBE
-    Transcribes ALL media files in a directory using the specified model.
+    Transcribes ALL media files in a directory using large-v3.
     """
     media_files = find_media_files(directory)
     total = len(media_files)
     print(f"[BATCH] Found {total} media files in: {directory}")
     print(f"[BATCH] VAD: {'ON' if use_vad else 'OFF (outdoor/noisy mode)'}")
-    print(f"[BATCH] Loading {model_name} model (one-time)...")
+    print(f"[BATCH] Loading large-v3 model (one-time)...")
 
-    model = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE)
+    model = WhisperModel("large-v3", device=DEVICE, compute_type=COMPUTE)
 
     transcribed = 0
     errors = 0
@@ -517,12 +345,11 @@ def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None, skip_exis
         # Actually we need to calculate out_path to know if we skip.
         # But out_path logic is duplicated inside loop.
         
-        safe_model = model_name.replace(".", "_").replace("-", "_")
         base_name = os.path.splitext(os.path.basename(file_path))[0]
         if output_dir:
-            out_check = os.path.join(output_dir, f"{base_name}_transcript_{safe_model}.txt")
+            out_check = os.path.join(output_dir, f"{base_name}_transcript.txt")
         else:
-            out_check = f"{os.path.splitext(file_path)[0]}_transcript_{safe_model}.txt"
+            out_check = f"{os.path.splitext(file_path)[0]}_transcript.txt"
             
         if skip_existing and os.path.exists(out_check):
              print(f"\n[{i}/{total}] [SKIPPING] {file_path}")
@@ -548,9 +375,9 @@ def run_batch_transcribe_dir(directory, use_vad=True, output_dir=None, skip_exis
             if lines:
                 base_name = os.path.splitext(os.path.basename(file_path))[0]
                 if output_dir:
-                    out_path = os.path.join(output_dir, f"{base_name}_transcript_{safe_model}.txt")
+                    out_path = os.path.join(output_dir, f"{base_name}_transcript.txt")
                 else:
-                    out_path = f"{os.path.splitext(file_path)[0]}_transcript_{safe_model}.txt"
+                    out_path = f"{os.path.splitext(file_path)[0]}_transcript.txt"
                 
                 with open(out_path, "w", encoding="utf-8") as f:
                     f.write(f"--- Full Transcription ({info.duration:.1f}s) ---\n")
@@ -985,14 +812,14 @@ def _analyze_claude(prompt, api_key, model="claude-sonnet-4-20250514"):
 if __name__ == "__main__":
     multiprocessing.freeze_support()  # Needed for PyInstaller on Windows
     parser = argparse.ArgumentParser(description="Fast Whisper Voice Scanner & Transcriber")
-    parser.add_argument("mode", choices=["scan", "batch_scan", "vad_scan", "transcribe", "batch_transcribe", "batch_transcribe_dir", "transcribe_file", "search_transcripts", "semantic_search", "analyze", "server"])
+    parser.add_argument("mode", choices=["scan", "batch_scan", "transcribe", "batch_transcribe", "batch_transcribe_dir", "transcribe_file", "search_transcripts", "semantic_search", "analyze", "server"])
     parser.add_argument("file", nargs="?", help="Path to media file (for scan/transcribe)")
     parser.add_argument("--dir", help="Directory to batch scan or transcribe")
     parser.add_argument("--start", type=float)
     parser.add_argument("--end", type=float)
     parser.add_argument("--no-vad", action="store_true", help="Disable VAD filter (for outdoor/noisy recordings)")
     parser.add_argument("--report", help="Path to scan report JSON (for batch_transcribe)")
-    parser.add_argument("--model", default="large-v1", help="Whisper model to use (e.g. tiny.en, base.en, small.en, medium.en, large-v1, large-v3)")
+    parser.add_argument("--model", default="large-v3", help="Whisper model to use (e.g. tiny.en, base.en, small.en, medium.en, large-v3)")
     parser.add_argument("--query", help="Search query for search_transcripts mode")
     parser.add_argument("--output-dir", help="Directory to save transcript files")
     parser.add_argument("--skip-existing", action="store_true", help="Skip files if transcript already exists")
@@ -1003,7 +830,6 @@ if __name__ == "__main__":
     parser.add_argument("--api-key", help="API key for cloud LLM")
     parser.add_argument("--cloud-model", help="Cloud model name")
     parser.add_argument("--analyze-type", choices=["summarize", "outline"], default="summarize", help="Analysis type")
-    parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero VAD sensitivity threshold (0.0-1.0, lower = more sensitive)")
     args = parser.parse_args()
 
     # Apply device override before any model loading
@@ -1022,22 +848,16 @@ if __name__ == "__main__":
             print("Error: Provide a directory with --dir or as positional argument")
             exit(1)
         run_batch_scanner(directory, use_vad=use_vad, report_path=args.report)
-    elif args.mode == "vad_scan":
-        directory = args.dir or args.file
-        if not directory:
-            print("Error: Provide a directory with --dir or as positional argument")
-            exit(1)
-        run_batch_vad_scan(directory, threshold=args.vad_threshold, report_path=args.report, skip_existing=args.skip_existing)
     elif args.mode == "transcribe":
         run_transcriber(args.file, args.start, args.end, output_dir=args.output_dir, skip_existing=args.skip_existing)
     elif args.mode == "batch_transcribe":
-        run_batch_transcriber(args.report, output_dir=args.output_dir, skip_existing=args.skip_existing, model_name=args.model)
+        run_batch_transcriber(args.report, output_dir=args.output_dir, skip_existing=args.skip_existing)
     elif args.mode == "batch_transcribe_dir":
         directory = args.dir or args.file
         if not directory:
             print("Error: Provide a directory with --dir or as positional argument")
             exit(1)
-        run_batch_transcribe_dir(directory, use_vad=use_vad, output_dir=args.output_dir, skip_existing=args.skip_existing, model_name=args.model)
+        run_batch_transcribe_dir(directory, use_vad=use_vad, output_dir=args.output_dir, skip_existing=args.skip_existing)
     elif args.mode == "transcribe_file":
         if not args.file:
             print("Error: Provide a file path")
@@ -1106,15 +926,6 @@ def run_server():
                 
                 run_batch_scanner(directory, use_vad=use_vad, report_path=report_path, model=current_model)
                 print(json.dumps({"status": "complete", "action": "scan"}), flush=True)
-
-            elif action == "vad_scan":
-                directory = cmd.get("directory")
-                threshold = cmd.get("vad_threshold", 0.5)
-                report_path = cmd.get("report_path")
-                skip_existing = cmd.get("skip_existing", False)
-                
-                run_batch_vad_scan(directory, threshold=threshold, report_path=report_path, skip_existing=skip_existing)
-                print(json.dumps({"status": "complete", "action": "vad_scan"}), flush=True)
 
             elif action == "transcribe":
                 # Ensure large-v3 (or requested model) is loaded
