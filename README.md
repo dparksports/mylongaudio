@@ -4,6 +4,8 @@
 
 TurboScribe uses OpenAI's Whisper models to transcribe long-form audio files (hours of content) with high accuracy. It includes an AI-powered meeting detector that uses local LLMs to distinguish real conversations from hallucinated transcripts.
 
+![TurboScribe Screenshot](turboscribe_dark_ui_v160_1770686953675.png)
+
 ## Download
 
 **[📥 Download TurboScribe-Windows.zip](https://github.com/dparksports/turboscribe/releases/latest/download/TurboScribe-Windows.zip)**
