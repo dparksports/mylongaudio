@@ -13,6 +13,7 @@
   <ItemGroup>
     <None Include="..\fast_engine.py" CopyToOutputDirectory="PreserveNewest" Link="fast_engine.py" />
     <None Include="..\timestamp_engine.py" CopyToOutputDirectory="PreserveNewest" Link="timestamp_engine.py" />
+    <Content Include="..\firebase_config.json" CopyToOutputDirectory="PreserveNewest" Link="firebase_config.json" />
 
   </ItemGroup>
 </Project>

@@ -1,24 +1,30 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace LongAudioApp;
 
 /// <summary>
-/// GA4 Measurement Protocol analytics with session management.
-/// - client_id persists across app launches (stored in settings.json)
+/// GA4 Measurement Protocol analytics with full session management.
+/// - client_id persists across app launches (stored in analytics_state.json)
 /// - session_id regenerates after 30 minutes of inactivity
-/// - engagement_time_msec is injected into every event
+/// - engagement_time_msec ("100") is injected into every event
+/// - Config loaded from firebase_config.json at runtime
+/// - Debug mode uses /debug/mp/collect endpoint (DEBUG builds only)
+/// - User-Agent set to browser-like string for GA4 OS/device parsing
+/// - user_properties include region, language, app_version, platform, screen_resolution
 /// </summary>
 public static class AnalyticsService
 {
-    private static readonly HttpClient _httpClient; 
-    private const string Endpoint = "https://www.google-analytics.com/mp/collect";
-    private const string MeasurementId = "G-P3FJP55E0E";
-    private const string ApiSecret = "q_VVWm8GRpGKIxvqxmZr7g";
+    private static readonly HttpClient _httpClient;
+    private const string CollectEndpoint = "https://www.google-analytics.com/mp/collect";
+    private const string DebugEndpoint = "https://www.google-analytics.com/debug/mp/collect";
     private const int SessionTimeoutMinutes = 30;
 
 #if DEBUG
@@ -27,23 +33,48 @@ public static class AnalyticsService
     private const bool EnableDebugMode = false;
 #endif
 
+    // Loaded from firebase_config.json
+    private static string _measurementId = "";
+    private static string _apiSecret = "";
+
+    // Session state
     private static string _clientId = "";
     private static string _sessionId = "";
     private static DateTime _lastActivity = DateTime.UtcNow;
 
+    // App metadata (cached once)
+    private static readonly string _appVersion;
+    private static readonly string _screenResolution;
+    private static readonly string _deviceRegion;
+    private static readonly string _language;
+
     static AnalyticsService()
     {
-        _httpClient = new HttpClient();
-        // Set User-Agent to identify the app and OS (critical for GA4 device/OS data)
-        // Mimicking a browser-like string or a standard app string helps GA4 parse it.
-        // We use a generic Windows User-Agent for now as we know this is a specific app.
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 LongAudioApp/1.0");
-        
-        // Set Accept-Language to current culture (for Location/Language demographics)
+        // Cache app metadata
+        _appVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+        _deviceRegion = GetRegionSafe();
+        _language = CultureInfo.CurrentCulture.Name;
+
+        // Screen resolution (WPF SystemParameters)
         try
         {
-            var culture = System.Globalization.CultureInfo.CurrentCulture.Name;
-            _httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd(culture);
+            _screenResolution = $"{(int)SystemParameters.PrimaryScreenWidth}x{(int)SystemParameters.PrimaryScreenHeight}";
+        }
+        catch
+        {
+            _screenResolution = "unknown";
+        }
+
+        _httpClient = new HttpClient();
+
+        // Set User-Agent to a browser-like string so GA4 parses OS/device correctly
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+            $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 TurboScribe/{_appVersion}");
+
+        // Set Accept-Language for language/locale demographics
+        try
+        {
+            _httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd(_language);
         }
         catch { /* ignore */ }
     }
@@ -51,33 +82,28 @@ public static class AnalyticsService
     private static readonly string SettingsPath = Path.Combine(
         AppDomain.CurrentDomain.BaseDirectory, "analytics_state.json");
 
-    /// <summary>Initialize on app startup — loads or creates client_id, starts session.</summary>
+    // ===== Public API =====
+
+    /// <summary>Initialize on app startup — loads config, loads/creates client_id, starts session.</summary>
     public static void Initialize()
     {
+        LoadConfig();
         LoadState();
-        // Trigger app_start, which will also trigger session_start if needed due to our new logic
-        TrackEvent("app_start");
+        EnsureSession();
+
+        // Send session_start followed by app_start on every launch
+        _ = TrackEventAsync("session_start");
+        _ = TrackEventAsync("app_start");
     }
 
     /// <summary>Fire-and-forget an event with optional parameters.</summary>
     public static async Task TrackEventAsync(string eventName, object? extraParams = null)
     {
-        if (!IsEnabled) return;
+        if (!IsEnabled || string.IsNullOrEmpty(_measurementId)) return;
 
         try
         {
-            // check for session rotation
-            if (CheckSession(out bool isNewSession))
-            {
-                SaveState();
-                if (isNewSession)
-                {
-                    // Recursively send session_start (safe because session is now fresh)
-                    await SendEventInternal("session_start");
-                }
-            }
-
-            // Send legitimate event
+            EnsureSession();
             await SendEventInternal(eventName, extraParams);
         }
         catch
@@ -86,19 +112,35 @@ public static class AnalyticsService
         }
     }
 
+    /// <summary>Convenience fire-and-forget wrapper (no await needed).</summary>
+    public static void TrackEvent(string eventName, object? extraParams = null)
+    {
+        _ = TrackEventAsync(eventName, extraParams);
+    }
+
+    public static bool IsEnabled { get; set; } = true;
+
+    // ===== Internal =====
+
     private static async Task SendEventInternal(string eventName, object? extraParams = null)
     {
-        // Build basic params (engagement_time_msec must be a number, not string)
+        // Build params — engagement_time_msec MUST be a string per GA4 Measurement Protocol
         var paramsDict = new System.Collections.Generic.Dictionary<string, object>
         {
             ["session_id"] = _sessionId,
-            ["engagement_time_msec"] = 100 
+            ["engagement_time_msec"] = "100"
         };
+
+        // Add debug_mode flag inside params so events show in GA4 DebugView
+        if (EnableDebugMode)
+        {
+            paramsDict["debug_mode"] = 1;
+        }
 
         // Merge extra params
         if (extraParams != null)
         {
-            try 
+            try
             {
                 var json = JsonSerializer.Serialize(extraParams);
                 var extra = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(json);
@@ -116,11 +158,11 @@ public static class AnalyticsService
             client_id = _clientId,
             user_properties = new
             {
-                // Rename 'country' to 'device_region' to avoid conflict with GA4 Auto-Geo
-                device_region = new { value = System.Globalization.RegionInfo.CurrentRegion.TwoLetterISORegionName ?? "XX" },
-                language = new { value = System.Globalization.CultureInfo.CurrentCulture.Name },
-                app_version = new { value = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown" },
-                platform = new { value = "windows" }
+                device_region = new { value = _deviceRegion },
+                language = new { value = _language },
+                app_version = new { value = _appVersion },
+                platform = new { value = "windows" },
+                screen_resolution = new { value = _screenResolution }
             },
             events = new[]
             {
@@ -132,33 +174,37 @@ public static class AnalyticsService
             }
         };
 
-        var url = EnableDebugMode 
-            ? $"{Endpoint}?measurement_id={MeasurementId}&api_secret={ApiSecret}&debug_mode=1"
-            : $"{Endpoint}?measurement_id={MeasurementId}&api_secret={ApiSecret}";
+        // Use the correct endpoint: /debug/mp/collect for debug, /mp/collect for production
+        var baseUrl = EnableDebugMode ? DebugEndpoint : CollectEndpoint;
+        var url = $"{baseUrl}?measurement_id={_measurementId}&api_secret={_apiSecret}";
         var body = JsonSerializer.Serialize(payload);
-        await _httpClient.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
+
+        var response = await _httpClient.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
+
+        // In debug mode, log the validation response
+        if (EnableDebugMode)
+        {
+            try
+            {
+                var responseBody = await response.Content.ReadAsStringAsync();
+                System.Diagnostics.Debug.WriteLine($"[Analytics] {eventName} → {response.StatusCode}: {responseBody}");
+            }
+            catch { /* ignore */ }
+        }
 
         _lastActivity = DateTime.UtcNow;
         SaveState();
     }
 
-    /// <summary>Convenience fire-and-forget wrapper (no await needed).</summary>
-    public static void TrackEvent(string eventName, object? extraParams = null)
-    {
-        _ = TrackEventAsync(eventName, extraParams);
-    }
-
     // ===== Session Management =====
 
     /// <summary>
-    /// Checks if session is expired or missing. 
-    /// Returns true if state changed (new session created or loaded).
+    /// Ensures a valid session exists. Creates a new session if:
+    /// - No session_id exists yet (first launch)
+    /// - More than 30 minutes have elapsed since last activity
     /// </summary>
-    private static bool CheckSession(out bool isNewSession)
+    private static void EnsureSession()
     {
-        isNewSession = false;
-        if (!IsEnabled) return false;
-
         var now = DateTime.UtcNow;
         var elapsed = now - _lastActivity;
 
@@ -166,16 +212,40 @@ public static class AnalyticsService
         {
             _sessionId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
             _lastActivity = now;
-            isNewSession = true;
-            return true;
+            SaveState();
         }
-        
-        return false;
+    }
+
+    // ===== Configuration =====
+
+    private static void LoadConfig()
+    {
+        try
+        {
+            var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "firebase_config.json");
+            if (File.Exists(configPath))
+            {
+                var json = File.ReadAllText(configPath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (root.TryGetProperty("measurementId", out var mid))
+                    _measurementId = mid.GetString() ?? "";
+                if (root.TryGetProperty("apiSecret", out var sec))
+                    _apiSecret = sec.GetString() ?? "";
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("[Analytics] firebase_config.json not found — analytics disabled.");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Analytics] Failed to load config: {ex.Message}");
+        }
     }
 
     // ===== Persistence =====
-
-    public static bool IsEnabled { get; set; } = true;
 
     private static void LoadState()
     {
@@ -196,7 +266,7 @@ public static class AnalyticsService
         }
         catch { }
 
-        // Ensure client_id exists
+        // Ensure client_id exists (persists across launches for accurate user count)
         if (string.IsNullOrEmpty(_clientId))
         {
             _clientId = Guid.NewGuid().ToString();
@@ -219,6 +289,20 @@ public static class AnalyticsService
             File.WriteAllText(SettingsPath, json);
         }
         catch { }
+    }
+
+    // ===== Helpers =====
+
+    private static string GetRegionSafe()
+    {
+        try
+        {
+            return RegionInfo.CurrentRegion.TwoLetterISORegionName ?? "XX";
+        }
+        catch
+        {
+            return "XX";
+        }
     }
 
     private class AnalyticsState
