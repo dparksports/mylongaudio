@@ -3,7 +3,6 @@ using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
@@ -11,31 +10,28 @@ using System.Windows;
 namespace LongAudioApp;
 
 /// <summary>
-/// GA4 Measurement Protocol analytics with full session management.
-/// - client_id persists across app launches (stored in analytics_state.json)
+/// GA4 Client-Side Analytics (mimicking JS SDK via /g/collect).
+/// - endpoint: https://www.google-analytics.com/g/collect
+/// - restores geo/demographics by letting GA4 process client IP/Headers
+/// - client_id persists across app launches
 /// - session_id regenerates after 30 minutes of inactivity
-/// - engagement_time_msec ("100") is injected into every event
-/// - Config loaded from firebase_config.json at runtime
-/// - Debug mode uses /debug/mp/collect endpoint (DEBUG builds only)
-/// - User-Agent set to browser-like string for GA4 OS/device parsing
-/// - user_properties include region, language, app_version, platform, screen_resolution
 /// </summary>
 public static class AnalyticsService
 {
     private static readonly HttpClient _httpClient;
-    private const string CollectEndpoint = "https://www.google-analytics.com/mp/collect";
-    private const string DebugEndpoint = "https://www.google-analytics.com/debug/mp/collect";
+    // Client-side endpoint (v2) - supports automatic geo/device detection
+    private const string Endpoint = "https://www.google-analytics.com/g/collect";
     private const int SessionTimeoutMinutes = 30;
 
-#if DEBUG
-    private const bool EnableDebugMode = true;
-#else
-    private const bool EnableDebugMode = false;
-#endif
+// #if DEBUG
+//     private const bool EnableDebugMode = true;
+// #else
+//     private const bool EnableDebugMode = false;
+// #endif
 
     // Loaded from firebase_config.json
     private static string _measurementId = "";
-    private static string _apiSecret = "";
+    // ApiSecret is NOT used for /g/collect
 
     // Session state
     private static string _clientId = "";
@@ -45,14 +41,12 @@ public static class AnalyticsService
     // App metadata (cached once)
     private static readonly string _appVersion;
     private static readonly string _screenResolution;
-    private static readonly string _deviceRegion;
     private static readonly string _language;
 
     static AnalyticsService()
     {
         // Cache app metadata
         _appVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
-        _deviceRegion = GetRegionSafe();
         _language = CultureInfo.CurrentCulture.Name;
 
         // Screen resolution (WPF SystemParameters)
@@ -67,11 +61,11 @@ public static class AnalyticsService
 
         _httpClient = new HttpClient();
 
-        // Set User-Agent to a browser-like string so GA4 parses OS/device correctly
+        // CRITICAL: User-Agent and Accept-Language headers are REQUIRED for /g/collect 
+        // to properly resolve device type, OS, and location (GeoIP).
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
             $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 TurboScribe/{_appVersion}");
 
-        // Set Accept-Language for language/locale demographics
         try
         {
             _httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd(_language);
@@ -84,35 +78,39 @@ public static class AnalyticsService
 
     // ===== Public API =====
 
-    /// <summary>Initialize on app startup — loads config, loads/creates client_id, starts session.</summary>
     public static void Initialize()
     {
         LoadConfig();
         LoadState();
         EnsureSession();
 
-        // Send session_start followed by app_start on every launch
         _ = TrackEventAsync("session_start");
         _ = TrackEventAsync("app_start");
     }
 
-    /// <summary>Fire-and-forget an event with optional parameters.</summary>
     public static async Task TrackEventAsync(string eventName, object? extraParams = null)
     {
         if (!IsEnabled || string.IsNullOrEmpty(_measurementId)) return;
 
         try
         {
+            string oldSession = _sessionId;
             EnsureSession();
+
+            // If the session ID rotated due to the 30-minute timeout, fire session_start first
+            if (oldSession != _sessionId && eventName != "session_start")
+            {
+                await SendEventInternal("session_start");
+            }
+
             await SendEventInternal(eventName, extraParams);
         }
         catch
         {
-            // Analytics should never crash the app
+            // Fail silently
         }
     }
 
-    /// <summary>Convenience fire-and-forget wrapper (no await needed).</summary>
     public static void TrackEvent(string eventName, object? extraParams = null)
     {
         _ = TrackEventAsync(eventName, extraParams);
@@ -124,73 +122,75 @@ public static class AnalyticsService
 
     private static async Task SendEventInternal(string eventName, object? extraParams = null)
     {
-        // Build params — engagement_time_msec MUST be a string per GA4 Measurement Protocol
-        var paramsDict = new System.Collections.Generic.Dictionary<string, object>
-        {
-            ["session_id"] = _sessionId,
-            ["engagement_time_msec"] = "100"
-        };
+        // 1. Build Base URL with standard parameters
+        // v=2 (Protocol Version)
+        // tid (Measurement ID)
+        // cid (Client ID)
+        // sid (Session ID)
+        // en (Event Name)
+        // av (App Version) - standard param
+        // ul (User Language) - standard param. Although header sends it, param is good fallback
+        // sr (Screen Resolution) - standard param
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"{Endpoint}?v=2");
+        sb.Append($"&tid={Uri.EscapeDataString(_measurementId)}");
+        sb.Append($"&cid={Uri.EscapeDataString(_clientId)}");
+        sb.Append($"&sid={Uri.EscapeDataString(_sessionId)}");
+        sb.Append($"&en={Uri.EscapeDataString(eventName)}");
+        
+        // Standard Demographics Params
+        sb.Append($"&av={Uri.EscapeDataString(_appVersion)}");
+        sb.Append($"&ul={Uri.EscapeDataString(_language)}");
+        sb.Append($"&sr={Uri.EscapeDataString(_screenResolution)}");
+        
+        // Special: engagement_time_msec is required for session metrics
+        // In /g/collect, it's often _et? But user asked for ep.engagement_time_msec=100
+        sb.Append("&ep.engagement_time_msec=100");
 
-        // Add debug_mode flag inside params so events show in GA4 DebugView
+        // debug_mode for DebugView
         if (EnableDebugMode)
         {
-            paramsDict["debug_mode"] = 1;
+            sb.Append("&ep.debug_mode=1");
         }
+        
+        // Custom Platform Property
+        sb.Append("&ep.platform=windows");
 
-        // Merge extra params
+        // 2. Inject extraParams as ep.*
         if (extraParams != null)
         {
             try
             {
                 var json = JsonSerializer.Serialize(extraParams);
-                var extra = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(json);
-                if (extra != null)
+                var dict = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(json);
+                
+                if (dict != null)
                 {
-                    foreach (var kv in extra)
-                        paramsDict[kv.Key] = kv.Value;
+                    foreach (var kv in dict)
+                    {
+                        var key = kv.Key;
+                        var val = kv.Value?.ToString() ?? "";
+                        
+                        // User instruction: Append each parameter using ep. prefix
+                        sb.Append($"&ep.{Uri.EscapeDataString(key)}={Uri.EscapeDataString(val)}");
+                    }
                 }
             }
-            catch { /* ignore param serialization errors */ }
+            catch { /* ignore serialization errors */ }
         }
 
-        var payload = new
+        // 3. Send Request (POST empty body)
+        // The query string contains all data.
+        var fullUrl = sb.ToString();
+        var response = await _httpClient.PostAsync(fullUrl, new StringContent(""));
+
+#if DEBUG
+        System.Diagnostics.Debug.WriteLine($"[Analytics] Sent {eventName} to {fullUrl}");
+        if (!response.IsSuccessStatusCode)
         {
-            client_id = _clientId,
-            user_properties = new
-            {
-                device_region = new { value = _deviceRegion },
-                language = new { value = _language },
-                app_version = new { value = _appVersion },
-                platform = new { value = "windows" },
-                screen_resolution = new { value = _screenResolution }
-            },
-            events = new[]
-            {
-                new
-                {
-                    name = eventName,
-                    @params = paramsDict
-                }
-            }
-        };
-
-        // Use the correct endpoint: /debug/mp/collect for debug, /mp/collect for production
-        var baseUrl = EnableDebugMode ? DebugEndpoint : CollectEndpoint;
-        var url = $"{baseUrl}?measurement_id={_measurementId}&api_secret={_apiSecret}";
-        var body = JsonSerializer.Serialize(payload);
-
-        var response = await _httpClient.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
-
-        // In debug mode, log the validation response
-        if (EnableDebugMode)
-        {
-            try
-            {
-                var responseBody = await response.Content.ReadAsStringAsync();
-                System.Diagnostics.Debug.WriteLine($"[Analytics] {eventName} → {response.StatusCode}: {responseBody}");
-            }
-            catch { /* ignore */ }
+             System.Diagnostics.Debug.WriteLine($"[Analytics] Failed: {response.StatusCode}");
         }
+#endif
 
         _lastActivity = DateTime.UtcNow;
         SaveState();
@@ -198,11 +198,6 @@ public static class AnalyticsService
 
     // ===== Session Management =====
 
-    /// <summary>
-    /// Ensures a valid session exists. Creates a new session if:
-    /// - No session_id exists yet (first launch)
-    /// - More than 30 minutes have elapsed since last activity
-    /// </summary>
     private static void EnsureSession()
     {
         var now = DateTime.UtcNow;
@@ -231,18 +226,11 @@ public static class AnalyticsService
 
                 if (root.TryGetProperty("measurementId", out var mid))
                     _measurementId = mid.GetString() ?? "";
-                if (root.TryGetProperty("apiSecret", out var sec))
-                    _apiSecret = sec.GetString() ?? "";
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine("[Analytics] firebase_config.json not found — analytics disabled.");
+                
+                // ApiSecret is not used for /g/collect
             }
         }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"[Analytics] Failed to load config: {ex.Message}");
-        }
+        catch { }
     }
 
     // ===== Persistence =====
@@ -266,7 +254,6 @@ public static class AnalyticsService
         }
         catch { }
 
-        // Ensure client_id exists (persists across launches for accurate user count)
         if (string.IsNullOrEmpty(_clientId))
         {
             _clientId = Guid.NewGuid().ToString();
@@ -289,20 +276,6 @@ public static class AnalyticsService
             File.WriteAllText(SettingsPath, json);
         }
         catch { }
-    }
-
-    // ===== Helpers =====
-
-    private static string GetRegionSafe()
-    {
-        try
-        {
-            return RegionInfo.CurrentRegion.TwoLetterISORegionName ?? "XX";
-        }
-        catch
-        {
-            return "XX";
-        }
     }
 
     private class AnalyticsState
