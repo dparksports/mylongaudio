@@ -95,9 +95,18 @@ public class PipInstaller
         // Install torch with CUDA 12.6 support (cu126).
         // cu126 supports RTX 3090, 4090, and 5090 (Blackwell) with good wheel availability.
         // Without the --index-url, pip installs CPU-only torch on Windows.
-        onOutput("Installing PyTorch with CUDA 12.6 (cu126) support...");
-        if (!await TryRunCommandAsync("-m pip install torch torchaudio --upgrade --no-warn-script-location --index-url https://download.pytorch.org/whl/cu126", onOutput))
-            failed.Add("torch (CUDA)");
+        // Check if CUDA torch is already installed before downloading ~2GB
+        onOutput("Checking existing PyTorch installation...");
+        if (await TryRunCommandAsync("-c \"import torch; assert torch.cuda.is_available(), 'no CUDA'\"", onOutput))
+        {
+            onOutput("PyTorch with CUDA already installed — skipping reinstall.");
+        }
+        else
+        {
+            onOutput("Installing PyTorch with CUDA 12.6 (cu126) support...");
+            if (!await TryRunCommandAsync("-m pip install torch torchaudio --force-reinstall --no-warn-script-location --index-url https://download.pytorch.org/whl/cu126", onOutput))
+                failed.Add("torch (CUDA)");
+        }
         
         // Install faster-whisper separately (from default PyPI)
         onOutput("Installing faster-whisper...");
