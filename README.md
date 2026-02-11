@@ -115,3 +115,7 @@ Apache License 2.0 — see [LICENSE](LICENSE) for details.
 - **llama-cpp-python**: Python bindings for llama.cpp
 - **faster-whisper**: CTranslate2-based Whisper implementation
 - **sentence-transformers**: Semantic search embeddings
+
+---
+
+Made with ❤️ in California
